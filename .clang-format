@@ -1,0 +1,4 @@
+BasedOnStyle: Webkit
+ColumnLimit: 0
+CompactNamespaces: true
+NamespaceIndentation: None

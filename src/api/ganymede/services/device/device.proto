@@ -1,0 +1,158 @@
+syntax = "proto3";
+
+package ganymede.services.device;
+
+// Service definition
+service DeviceService {
+    rpc CreateDevice(CreateDeviceRequest) returns (Device);
+    rpc UpdateDevice(UpdateDeviceRequest) returns (Device);
+    rpc GetDevice(GetDeviceRequest) returns (Device);
+    rpc ListDevice(ListDeviceRequest) returns (ListDeviceResponse);
+    rpc DeleteDevice(DeleteDeviceRequest) returns (Empty);
+
+    rpc CreateConfig(CreateConfigRequest) returns (Config);
+    rpc UpdateConfig(UpdateConfigRequest) returns (Config);
+    rpc GetConfig(GetConfigRequest) returns (Config);
+    rpc ListConfig(ListConfigRequest) returns (ListConfigResponse);
+    rpc DeleteConfig(DeleteConfigRequest) returns (Empty);
+}
+
+// Requests and responses
+message CreateDeviceRequest {
+    Device device = 1;
+}
+
+message UpdateDeviceRequest {
+    Device device = 1;
+}
+
+message GetDeviceRequest {
+    oneof filter {
+        string device_uid = 1;
+        string device_mac = 2;
+    }
+}
+
+message ListDeviceRequest {
+    oneof filter {
+        string name_filter = 1;
+        string config_uid = 2;
+    }
+}
+
+message ListDeviceResponse {
+    repeated Device devices = 1;
+}
+
+message DeleteDeviceRequest {
+    string device_uid = 1;
+    string reason = 2;
+}
+
+message CreateConfigRequest {
+    Config config = 1;
+}
+
+message GetConfigRequest {
+    string config_uid = 1;
+}
+
+message ListConfigRequest {
+    string name_filter = 1;
+}
+
+message ListConfigResponse {
+    repeated Config configs = 1;
+}
+
+message UpdateConfigRequest {
+    Config config = 1;
+}
+
+message DeleteConfigRequest {
+    string config_uid = 1;
+    string reason = 2;
+
+    string replacement_config_uid = 3;
+}
+
+message DeleteConfigResponse {
+
+}
+
+message Empty { }
+
+// Primitive message types
+message Device {
+    // Output only.
+    string uid = 1;
+
+    string mac = 2;
+
+    // Required.
+    string display_name = 10;
+
+    string description = 11;
+
+    // Device timezone in IANA <zone>/<city> format
+    string timezone = 12;
+
+    // Output only. Current device's offset from UTC (including DST if applicable)
+    int64 timezone_offset_minutes = 13;
+
+    string config_uid = 20;
+}
+
+message Time {
+    uint32 hour = 1;
+    uint32 minute = 2;
+    uint32 second = 3;
+}
+
+// Sets target values for the solution flow
+message PompConfig {
+    // In Liters per Minute
+    float flow = 1;
+}
+
+// Sets target values for the solution
+message SolutionConfig {
+    // [0-14]
+    float ph = 1;
+
+    // In ???
+    float ec = 2;
+
+    // In Celsius
+    float temperature = 3;
+}
+
+message Luminaire {
+    message DailySchedule {
+        Time start = 1;
+        Time stop = 2;
+
+        // 0-255. If use_pwm is false, any non-zero value will be interpreted as "fully-on"
+        uint32 intensity = 3; 
+    }
+
+    uint32 port = 1;
+    bool use_pwm = 2;
+
+    repeated DailySchedule photo_period = 3;
+}
+
+message LightConfig {
+    repeated Luminaire luminaires = 1;
+}
+
+message Config {
+    // Output only.
+    string uid = 1;
+
+    string display_name = 2;
+
+    PompConfig     pomp_config     = 10;
+    SolutionConfig solution_config = 11;
+    LightConfig    light_config    = 12;
+}
