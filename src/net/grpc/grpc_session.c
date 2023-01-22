@@ -1,3 +1,5 @@
+#include "grpc_session.h"
+
 #include <string.h>
 
 #include <esp_log.h>
@@ -6,8 +8,8 @@
 #include <nghttp2/nghttp2.h>
 
 #include <api/error.h>
+#include <net/auth/auth.h>
 
-#include "grpc_session.h"
 
 static ssize_t grpc_tls_send(nghttp2_session* ng, const uint8_t* data, size_t length, int flags, void* user_data)
 {
@@ -224,14 +226,25 @@ int grpc_session_execute(struct GrpcSession* session, const char* path, const ui
         return -1;
     }
 
+    char* authorization = NULL;
     char lengthstr[10] = { 0 };
     snprintf(lengthstr, 10, "%lu", length + 5);
+
+    ESP_LOGD("grpc", "Loading auth token");
+    if (auth_token()[0] == 0) {
+        return -1;
+    }
+
+    authorization = malloc(4096);
+    snprintf(authorization, 4096, "Bearer %s", auth_token());
+    ESP_LOGD("grpc", "authorization: %s", authorization);
 
     nghttp2_nv headers[] = {
         grpc_http2_make_header_static(":method", "POST"),
         grpc_http2_make_header_static(":scheme", "https"),
         grpc_http2_make_header(":path", path),
         grpc_http2_make_header_static(":authority", "ganymede.davidbourgault.ca"),
+        grpc_http2_make_header("authorization", authorization),
         grpc_http2_make_header_static("content-type", "application/grpc+proto"),
         grpc_http2_make_header("content-length", lengthstr),
         grpc_http2_make_header_static("user-agent", "grpc-c/1.0.0 (esp32s2; nghttp2; ganymede)"),
@@ -256,6 +269,7 @@ int grpc_session_execute(struct GrpcSession* session, const char* path, const ui
     int rc = nghttp2_submit_request(session->ng, NULL, headers, sizeof(headers) / sizeof(nghttp2_nv), &provider, &session);
     if (rc < 0) {
         ESP_LOGE("grpc", "nghttp2 submit_request failed: %s", nghttp2_strerror(rc));
+        free(authorization);
         return -1;
     }
 
@@ -271,5 +285,6 @@ int grpc_session_execute(struct GrpcSession* session, const char* path, const ui
         }
     } while (session->transfer_complete == 0);
 
+    free(authorization);
     return 0;
 }

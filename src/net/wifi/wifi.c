@@ -1,3 +1,7 @@
+#include "wifi.h"
+
+#include <string.h>
+
 #include <esp_wifi.h>
 #include <nvs_flash.h>
 
@@ -7,12 +11,10 @@
 
 #include <api/error.h>
 
-#include "wifi.h"
-
 #define WIFI_TASK_STACK_DEPTH (1024 * 4)
 
 #define WIFI_CONNECTED_BIT BIT0
-#define WIFI_FAIL_BIT      BIT1
+#define WIFI_FAIL_BIT BIT1
 
 EventGroupHandle_t _wifi_event_group = NULL;
 
@@ -20,17 +22,29 @@ static int _nvs_get_wifi_config(wifi_config_t* config)
 {
     nvs_handle_t nvs;
     size_t size;
+    int rc;
 
-    ERROR_CHECK(nvs_open("nvs", NVS_READONLY, &nvs));
+    strcpy((char*)config->sta.ssid, CONFIG_WIFI_SSID);
+    strcpy((char*)config->sta.password, CONFIG_WIFI_PASSPRHASE);
 
-    size = sizeof(config->sta.ssid);
-    ERROR_CHECK(nvs_get_str(nvs, "wifi-ssid", (char*)config->sta.ssid, &size));
+    if (nvs_open("nvs", NVS_READONLY, &nvs) == ESP_OK) {
+        size = sizeof(config->sta.ssid);
+        rc = nvs_get_str(nvs, "wifi-ssid", (char*)config->sta.ssid, &size);
 
-    size = sizeof(config->sta.password);
-    ERROR_CHECK(nvs_get_str(nvs, "wifi-password", (char*)config->sta.password, &size));
+        if (rc != ESP_ERR_NVS_NOT_FOUND && rc != ESP_OK) {
+            ERROR_CHECK(rc);
+        }
 
-    config->sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
-    nvs_close(nvs);
+        size = sizeof(config->sta.password);
+        rc = nvs_get_str(nvs, "wifi-password", (char*)config->sta.password, &size);
+
+        if (rc != ESP_ERR_NVS_NOT_FOUND && rc != ESP_OK) {
+            ERROR_CHECK(rc);
+        }
+
+        config->sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+        nvs_close(nvs);
+    }
 
     return ESP_OK;
 }
@@ -54,7 +68,7 @@ static void _wifi_event_handler(void* arg, esp_event_base_t source, int32_t id, 
 static void _wifi_task(void* args)
 {
     wifi_init_config_t init_config = WIFI_INIT_CONFIG_DEFAULT();
-    wifi_config_t wifi_config = { };
+    wifi_config_t wifi_config = {};
 
     esp_event_handler_instance_t wifi_event_handler;
     esp_event_handler_instance_t ip_event_handler;
@@ -64,12 +78,10 @@ static void _wifi_task(void* args)
     ERROR_CHECK(esp_wifi_init(&init_config));
 
     ERROR_CHECK(esp_event_handler_instance_register(
-        WIFI_EVENT, ESP_EVENT_ANY_ID, &_wifi_event_handler, NULL, &wifi_event_handler
-    ));
+        WIFI_EVENT, ESP_EVENT_ANY_ID, &_wifi_event_handler, NULL, &wifi_event_handler));
 
     ERROR_CHECK(esp_event_handler_instance_register(
-        IP_EVENT, IP_EVENT_STA_GOT_IP, &_wifi_event_handler, NULL, &ip_event_handler
-    ));
+        IP_EVENT, IP_EVENT_STA_GOT_IP, &_wifi_event_handler, NULL, &ip_event_handler));
 
     ERROR_CHECK(_nvs_get_wifi_config(&wifi_config));
 
@@ -79,8 +91,7 @@ static void _wifi_task(void* args)
 
     while (1) {
         EventBits_t bits = xEventGroupWaitBits(
-            _wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT, pdFALSE, pdFALSE, portMAX_DELAY
-        );
+            _wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT, pdFALSE, pdFALSE, portMAX_DELAY);
         xEventGroupClearBits(_wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
 
         if (bits & WIFI_CONNECTED_BIT) {

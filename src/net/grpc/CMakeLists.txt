@@ -13,9 +13,11 @@ target_compile_options(net.grpc
 
 target_link_libraries(net.grpc
     PUBLIC
+        net.auth
         nghttp2
         idf::esp-tls
         idf::esp_wifi
         idf::freertos
+        idf::log
         idf::protobuf-c
 )

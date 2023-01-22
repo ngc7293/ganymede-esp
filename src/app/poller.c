@@ -86,7 +86,7 @@ void poller_task(void* args)
             poller_device_response_cb
         ));
 
-        vTaskDelay(60 * 1000 / portTICK_PERIOD_MS);
+        vTaskDelay((30 * 60 * 1000) / portTICK_PERIOD_MS);
 
         if (device) {
             protobuf_c_message_free_unpacked((ProtobufCMessage*) device, NULL);

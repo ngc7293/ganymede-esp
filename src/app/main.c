@@ -15,6 +15,7 @@
 #include <api/error.h>
 #include <app/lights.h>
 #include <app/poller.h>
+#include <net/auth/auth.h>
 #include <net/grpc/grpc.h>
 #include <net/wifi/wifi.h>
 
@@ -36,16 +37,18 @@ void app_main(void)
     ERROR_CHECK(esp_event_loop_create_default());
     ERROR_CHECK(_nvs_try_init());
 
-    ERROR_CHECK(grpc_init());
 
     // NVS
     {
         nvs_handle_t nvs;
         ERROR_CHECK(nvs_open("nvs", NVS_READWRITE, &nvs));
         ERROR_CHECK(nvs_set_str(nvs, "wifi-ssid", "eduroam"));
+        ERROR_CHECK(nvs_set_str(nvs, "wifi-password", "how did this happen?"));
         nvs_close(nvs);
     }
 
+    // ERROR_CHECK(grpc_init());
+    ERROR_CHECK(auth_init());
     ERROR_CHECK(wifi_init());
 
     // SNTP
@@ -55,8 +58,8 @@ void app_main(void)
         sntp_init();
     }
 
-    app_poller_init();
-    app_lights_init();
+    // app_poller_init();
+    // app_lights_init();
 
     size_t cursor = 0;
     char linebuf[128];

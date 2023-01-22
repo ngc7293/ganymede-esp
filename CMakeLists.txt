@@ -4,6 +4,8 @@ project(ganymede VERSION 0.0.1)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 include($ENV{IDF_PATH}/tools/cmake/idf.cmake)
 
+set(kconfigs "" CACHE INTERNAL "kconfigs")
+
 add_subdirectory(libs)
 add_subdirectory(src)
 
@@ -18,6 +20,8 @@ idf_build_process(
         esp-tls
         esptool_py
         freertos
+        json
+        log
         nvs_flash
         protobuf-c
         unity

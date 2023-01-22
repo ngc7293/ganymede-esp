@@ -1,0 +1,9 @@
+menu "Wifi Connection"
+
+    config WIFI_SSID
+        string "WiFi SSID"
+
+    config WIFI_PASSPRHASE
+        string "WiFi passphrase"
+
+endmenu

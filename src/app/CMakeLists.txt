@@ -14,11 +14,13 @@ target_compile_options(ganymede.core
 target_link_libraries(ganymede.core
     PUBLIC
         api.ganymede.service.device
+        net.auth
         net.grpc
         net.wifi
         idf::driver
         idf::esp_common
         idf::esp_rom
+        idf::log
         idf::nvs_flash
 )
 
