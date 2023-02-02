@@ -1,12 +1,6 @@
-add_library(net.auth STATIC
+add_component(net.auth
     auth.h
     auth.c
-)
-
-target_compile_options(net.auth
-    PUBLIC
-        -Wall
-        -Werror
 )
 
 target_link_libraries(net.auth
@@ -14,11 +8,11 @@ target_link_libraries(net.auth
         net.http2
         idf::esp_wifi
         idf::esp-tls
+        idf::esp_timer
         idf::freertos
         idf::json
         idf::log
         idf::nvs_flash
 )
 
-list(APPEND kconfigs "${CMAKE_CURRENT_SOURCE_DIR}/Kconfig")
-set(kconfigs "${kconfigs}" CACHE INTERNAL "kconfigs")
+target_kconfig(net.auth Kconfig)

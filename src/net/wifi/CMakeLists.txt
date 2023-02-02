@@ -1,12 +1,6 @@
-add_library(net.wifi STATIC
+add_component(net.wifi STATIC
     wifi.h
     wifi.c
-)
-
-target_compile_options(net.wifi
-    PUBLIC
-        -Wall
-        -Werror
 )
 
 target_link_libraries(net.wifi
@@ -17,5 +11,4 @@ target_link_libraries(net.wifi
         idf::nvs_flash
 )
 
-list(APPEND kconfigs "${CMAKE_CURRENT_SOURCE_DIR}/Kconfig")
-set(kconfigs "${kconfigs}" CACHE INTERNAL "kconfigs")
+target_kconfig(net.wifi Kconfig)

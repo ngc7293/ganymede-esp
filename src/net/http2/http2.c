@@ -7,7 +7,7 @@
 
 #include <nghttp2/nghttp2.h>
 
-const char* TAG = "http2";
+static const char* TAG = "http2";
 
 struct http2_session {
     esp_tls_t* tls;
@@ -188,7 +188,9 @@ static int http2_tls_init(http2_session_t* session)
 static int http2_ng_init(http2_session_t* session)
 {
     nghttp2_session_callbacks* callbacks;
-    if (nghttp2_session_callbacks_new(&callbacks) != 0) {
+    int rc = 0;
+    if ((rc = nghttp2_session_callbacks_new(&callbacks)) != 0) {
+        ESP_LOGE(TAG, "nghttp2_session_callbacks_new rc=%d", rc);
         return ESP_FAIL;
     }
 
@@ -199,7 +201,8 @@ static int http2_ng_init(http2_session_t* session)
     nghttp2_session_callbacks_set_on_data_chunk_recv_callback(callbacks, http2_on_data);
     nghttp2_session_callbacks_set_on_stream_close_callback(callbacks, http2_on_stream_close);
 
-    if (nghttp2_session_client_new(&session->ng, callbacks, session) != 0) {
+    if ((rc = nghttp2_session_client_new(&session->ng, callbacks, session)) != 0) {
+        ESP_LOGE(TAG, "nghttp2_session_client_new rc=%d", rc);
         return ESP_FAIL;
     }
 
