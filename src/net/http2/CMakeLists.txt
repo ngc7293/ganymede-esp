@@ -12,6 +12,8 @@ target_compile_options(net.http2
 target_link_libraries(net.http2
     PUBLIC
         nghttp2
-        idf::log
+        idf::esp_timer
         idf::esp-tls
+        idf::freertos
+        idf::log
 )

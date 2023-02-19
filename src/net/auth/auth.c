@@ -92,21 +92,31 @@ static int auth_perform_refresh()
     static char refresh_token[512] = {0};
     size_t refresh_token_len = 512;
 
-    int status;
-    cJSON* json;
-    http2_session_t* session = http2_session_init();
+    struct http_perform_options options = {
+        .content_type = "application/json",
+        .authorization = "",
+        .use_grpc_status = false
+    };
+
+    int status = -1;
+    cJSON* json = NULL;
+    http2_session_t* session = http2_session_acquire(portMAX_DELAY);
 
     if (session == NULL) {
         ESP_LOGE(TAG, "failed to create http2 session");
-        http2_session_destroy(session);
+        http2_session_release(session);
         return ESP_FAIL;
     }
 
     auth_read_credentials_from_storage(NULL, NULL, refresh_token, &refresh_token_len);
     snprintf((char*)_payload_buffer, sizeof(_payload_buffer), REFRESH_TOKEN_REQUEST_PAYLOAD_TEMPLATE, refresh_token);
 
-    http2_session_connect(session, CONFIG_AUTH_AUTH0_HOSTNAME, 443);
-    status = http2_perform(session, "POST", "/oauth/token", _payload_buffer, "application/json", (char*) _response_buffer, sizeof(_response_buffer));
+    if (http2_session_connect(session, CONFIG_AUTH_AUTH0_HOSTNAME, 443) == ESP_FAIL) {
+        ESP_LOGE(TAG, "failed connect to %s:443", CONFIG_AUTH_AUTH0_HOSTNAME);
+        http2_session_release(session);
+        return ESP_FAIL;
+    }
+    status = http2_perform(session, "POST", "/oauth/token", _payload_buffer, strlen(_payload_buffer), (char*) _response_buffer, sizeof(_response_buffer), options);
     
     if (status == 200) {
         json = cJSON_Parse((const char*)_response_buffer);
@@ -117,12 +127,12 @@ static int auth_perform_refresh()
         cJSON_Delete(json);
     } else {
         ESP_LOGE(TAG, "Failed to refresh token: status=%d", status);
-        http2_session_destroy(session);
+        http2_session_release(session);
         return ESP_FAIL;
     }
 
     ESP_LOGI(TAG, "Refreshed Access Token");
-    http2_session_destroy(session);
+    http2_session_release(session);
     heap_trace_stop();
     heap_trace_dump();
     return ESP_OK;
@@ -132,22 +142,34 @@ static int auth_perform_interactive_register(void)
 {
     heap_trace_start(HEAP_TRACE_LEAKS);
 
-    int status;
-    cJSON* json;
-    http2_session_t* session = http2_session_init();
+    int status = -1;
+    cJSON* json = NULL;
+
+    struct http_perform_options options = {
+        .content_type = "application/json",
+        .authorization = "",
+        .use_grpc_status = false
+    };
+
+    http2_session_t* session = http2_session_acquire(portMAX_DELAY);
 
     if (session == NULL) {
         ESP_LOGE(TAG, "failed to create http2 session");
-        http2_session_destroy(session);
+        http2_session_release(session);
         return ESP_FAIL;
     }
 
-    http2_session_connect(session, CONFIG_AUTH_AUTH0_HOSTNAME, 443);
-    status = http2_perform(session, "POST", "/oauth/device/code", DEVICE_TOKEN_REQUEST_PAYLOAD, "application/json", (char*) _response_buffer, sizeof(_response_buffer));
+    if (http2_session_connect(session, CONFIG_AUTH_AUTH0_HOSTNAME, 443) == ESP_FAIL) {
+        ESP_LOGE(TAG, "failed connect to %s:443", CONFIG_AUTH_AUTH0_HOSTNAME);
+        http2_session_release(session);
+        return ESP_FAIL;
+    }
+
+    status = http2_perform(session, "POST", "/oauth/device/code", DEVICE_TOKEN_REQUEST_PAYLOAD, strlen(DEVICE_TOKEN_REQUEST_PAYLOAD), (char*) _response_buffer, sizeof(_response_buffer), options);
 
     if (status / 100 != 2) {
         ESP_LOGE(TAG, "auth0 returned non-200 status: %d message=%s", status, _response_buffer);
-        http2_session_destroy(session);
+        http2_session_release(session);
         return ESP_FAIL;
     }
 
@@ -163,11 +185,11 @@ static int auth_perform_interactive_register(void)
 
     cJSON_free(json);
 
-    int64_t end = esp_timer_get_time() + (expiry * 10e6);
+    int64_t end = esp_timer_get_time() + (expiry * 1e6);
 
     while (esp_timer_get_time() < end) {
         vTaskDelay((interval * 1000) / portTICK_PERIOD_MS);
-        status = http2_perform(session, "POST", "/oauth/token", _payload_buffer, "application/json", (char*) _response_buffer, sizeof(_response_buffer));
+        status = http2_perform(session, "POST", "/oauth/token", _payload_buffer, strlen(_payload_buffer), (char*) _response_buffer, sizeof(_response_buffer), options);
 
         if (status / 100 == 2) {
             break;
@@ -185,7 +207,7 @@ static int auth_perform_interactive_register(void)
         cJSON_free(json);
     }
 
-    http2_session_destroy(session);
+    http2_session_release(session);
     heap_trace_stop();
     heap_trace_dump();
     return ESP_OK;

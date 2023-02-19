@@ -4,10 +4,15 @@
 
 #include <esp_log.h>
 #include <esp_tls.h>
+#include <esp_timer.h>
+
+#include <freertos/semphr.h>
 
 #include <nghttp2/nghttp2.h>
 
 static const char* TAG = "http2";
+
+static SemaphoreHandle_t _http_mutex;
 
 struct http2_session {
     esp_tls_t* tls;
@@ -20,6 +25,8 @@ struct http2_session {
     char* dest;
     size_t dest_cursor;
     size_t dest_length;
+
+    bool use_grpc_status;
 
     char* hostname;
     int status;
@@ -150,9 +157,12 @@ static int http2_on_header(nghttp2_session *ng, const nghttp2_frame *frame, cons
 
     http2_session_t* session = (http2_session_t*) user_data;
 
-    if (strncmp((const char*) name, ":status", namelen) == 0) {
+    const char* status_header = session->use_grpc_status ? "grpc-status" : ":status";
+
+    if (strncmp((const char*) name, status_header, namelen) == 0) {
         int status = strtol((const char*) value, NULL, 10);
-        if (status != 0) {
+
+        if (status != 0 || (session->use_grpc_status && strncmp((const char*) value, "0", valuelen) == 0)) {
             session->status = status;
         }
     }
@@ -188,6 +198,7 @@ static int http2_tls_init(http2_session_t* session)
 static int http2_ng_init(http2_session_t* session)
 {
     nghttp2_session_callbacks* callbacks;
+
     int rc = 0;
     if ((rc = nghttp2_session_callbacks_new(&callbacks)) != 0) {
         ESP_LOGE(TAG, "nghttp2_session_callbacks_new rc=%d", rc);
@@ -210,8 +221,22 @@ static int http2_ng_init(http2_session_t* session)
     return ESP_OK;
 }
 
-http2_session_t* http2_session_init(void)
+int http2_init()
 {
+    if ((_http_mutex = xSemaphoreCreateMutex()) == NULL) {
+        ESP_LOGE(TAG, "mutex initialization failed");
+        return ESP_FAIL;
+    }
+
+    return ESP_OK;
+}
+
+http2_session_t* http2_session_acquire(const TickType_t ticks_to_wait)
+{
+    if (xSemaphoreTake(_http_mutex, ticks_to_wait) == pdFALSE) {
+        return NULL;
+    }
+
     http2_session_t* session = malloc(sizeof(http2_session_t));
     session->tls = NULL;
     session->ng = NULL;
@@ -219,13 +244,13 @@ http2_session_t* http2_session_init(void)
 
     if (http2_tls_init(session) == ESP_FAIL) {
         ESP_LOGE(TAG, "tls initialization failed");
-        http2_session_destroy(session);
+        http2_session_release(session);
         return NULL;
     }
 
     if (http2_ng_init(session) == ESP_FAIL) {
         ESP_LOGE(TAG, "http2 library initialization failed");
-        http2_session_destroy(session);
+        http2_session_release(session);
         return NULL;
     }
 
@@ -241,12 +266,14 @@ int http2_session_connect(http2_session_t* session, const char* hostname, uint16
     esp_tls_cfg_t config = {
         .alpn_protos = alpn_protos,
         .non_block = true,
-        .timeout_ms = 10 * 1000
+        .timeout_ms = 5 * 1000
     };
 
     if (esp_tls_conn_new_sync(hostname, hostname_length, port, &config, session->tls) == -1) {
         return ESP_FAIL;
     }
+
+    ESP_LOGD(TAG, "connected");
 
     session->hostname = (char*) malloc(hostname_length);
     strcpy(session->hostname, hostname);
@@ -254,20 +281,22 @@ int http2_session_connect(http2_session_t* session, const char* hostname, uint16
     return nghttp2_submit_settings(session->ng, NGHTTP2_FLAG_NONE, NULL, 0);
 }
 
-int http2_perform(http2_session_t* session, const char* method, const char* path, const char* payload, const char* content_type, char* dest, size_t dest_len)
+int http2_perform(http2_session_t* session, const char* method, const char* path, const char* payload, size_t payload_len, char* dest, size_t dest_len, const struct http_perform_options options)
 {
     if (session == NULL) {
         return -1;
     }
 
     session->payload = (char*) payload;
-    session->payload_length = strlen(payload);
+    session->payload_length = payload_len;
     session->payload_cursor = 0;
 
     session->dest = dest;
     session->dest_length = dest_len;
     session->dest_cursor = 0;
     
+    session->use_grpc_status = options.use_grpc_status;
+
     session->status = -1;
     session->complete = false;
 
@@ -279,9 +308,11 @@ int http2_perform(http2_session_t* session, const char* method, const char* path
         http2_make_header_static(":scheme", "https"),
         http2_make_header(":path", path),
         http2_make_header_static(":authority", session->hostname),
-        http2_make_header("content-type", content_type),
         http2_make_header("content-length", content_length),
+        http2_make_header("content-type", options.content_type),
+        http2_make_header("authorization",  options.authorization),
         http2_make_header_static("user-agent", "esp32s2; nghttp2; ganymede"),
+        http2_make_header_static("te", "trailers")
     };
 
     nghttp2_data_provider provider = {
@@ -294,6 +325,9 @@ int http2_perform(http2_session_t* session, const char* method, const char* path
         return -1;
     }
 
+    ESP_LOGD(TAG, "%s %s%s", method, session->hostname, path);
+
+    int64_t end = esp_timer_get_time() + (5e6);
     do {
         if ((rc = nghttp2_session_send(session->ng))) {
             ESP_LOGE(TAG, "send failed: %s", nghttp2_strerror(rc));
@@ -304,12 +338,14 @@ int http2_perform(http2_session_t* session, const char* method, const char* path
             ESP_LOGE(TAG, "recv failed: %s", nghttp2_strerror(rc));
             break;
         }
-    } while (session->complete == false);
+
+        ESP_LOGD(TAG, "Processing: current=%lld end=%lld", esp_timer_get_time(), end);
+    } while (session->complete == false && esp_timer_get_time() < end);
 
     return session->status;
 }
 
-int http2_session_destroy(http2_session_t* session)
+int http2_session_release(http2_session_t* session)
 {
     if (session->hostname != NULL) {
         free(session->hostname);
@@ -324,5 +360,7 @@ int http2_session_destroy(http2_session_t* session)
     }
 
     free(session);
+
+    xSemaphoreGive(_http_mutex);
     return ESP_OK;
 }

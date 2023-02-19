@@ -14,9 +14,9 @@
 
 #include <api/error.h>
 #include <app/lights.h>
-#include <app/poller.h>
+#include <app/poll.h>
 #include <net/auth/auth.h>
-#include <net/grpc/grpc.h>
+#include <net/http2/http2.h>
 #include <net/wifi/wifi.h>
 
 
@@ -47,6 +47,8 @@ void app_main(void)
         nvs_close(nvs);
     }
 
+    ERROR_CHECK(http2_init());
+
     // ERROR_CHECK(grpc_init());
     ERROR_CHECK(auth_init());
     ERROR_CHECK(wifi_init());
@@ -58,7 +60,7 @@ void app_main(void)
         sntp_init();
     }
 
-    // app_poller_init();
+    app_poll_init();
     // app_lights_init();
 
     size_t cursor = 0;

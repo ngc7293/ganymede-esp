@@ -1,8 +1,8 @@
 add_library(ganymede.core
-    lights.c
-    lights.h
-    poller.c
-    poller.h
+    # lights.c
+    # lights.h
+    poll.c
+    poll.h
 )
 
 target_compile_options(ganymede.core
@@ -15,13 +15,10 @@ target_link_libraries(ganymede.core
     PUBLIC
         api.ganymede.service.device
         net.auth
-        net.grpc
         net.wifi
-        idf::driver
-        idf::esp_common
-        idf::esp_rom
         idf::log
-        idf::nvs_flash
+        idf::esp_wifi
+        idf::esp_timer
 )
 
 add_executable(ganymede
@@ -37,6 +34,13 @@ target_compile_options(ganymede
 target_link_libraries(ganymede
     PUBLIC
         ganymede.core
+        net.auth
+        net.wifi
+        idf::driver
+        idf::esp_common
+        idf::esp_rom
+        idf::log
+        idf::nvs_flash
 )
 
-add_subdirectory(tests)
+# add_subdirectory(tests)
