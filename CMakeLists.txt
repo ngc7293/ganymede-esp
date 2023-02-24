@@ -50,7 +50,6 @@ idf_build_process(
         log
         nvs_flash
         protobuf-c
-        unity
     SDKCONFIG
         ${CMAKE_CURRENT_LIST_DIR}/sdkconfig
     BUILD_DIR
@@ -62,5 +61,4 @@ foreach(TARGET ${GANYMEDE_COMPONENTS})
     target_compile_definitions(${TARGET} PUBLIC ${COMPILE_DEFINITIONS})
 endforeach()
 
-# idf_build_executable(ganymede-test)
 idf_build_executable(ganymede)

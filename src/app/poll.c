@@ -9,13 +9,14 @@
 #include <freertos/event_groups.h>
 
 #include <api/error.h>
+#include <app/lights.h>
 #include <net/auth/auth.h>
 #include <net/http2/http2.h>
 #include <ganymede/services/device/device.pb-c.h>
 
 #include "poll.h"
 
-#define POLLER_TASK_STACK_DEPTH (1024 * 20)
+#define POLLER_TASK_STACK_DEPTH (1024 * 4)
 
 #define POLL_CONNECTED_BIT BIT0
 #define POLL_REFRESH_REQUEST_BIT BIT1
@@ -27,62 +28,6 @@ static esp_timer_handle_t _poll_refresh_timer = NULL;
 
 static uint8_t _payload_buffer[2048] = { 0 };
 static uint8_t _response_buffer[2048] = { 0 };
-
-
-static Ganymede__Services__Device__Device* device = NULL;
-// static Ganymede__Services__Device__Config* config = NULL;
-
-// static void poller_config_response_cb(int status, ProtobufCMessage* message)
-// {
-//     if (status == 0 && message != NULL) {
-//         config = (Ganymede__Services__Device__Config*)message;
-//         ESP_LOGI("main", "config.displayName=%s", config->display_name);
-
-//         app_lights_notify_config(config);
-//     } else {
-//         ESP_LOGE("main", "config.displayName=??? status=%d", status);
-//     }
-// }
-
-// static void poller_device_response_cb(int status, ProtobufCMessage* message)
-// {
-//     if (status == 0 && message != NULL) {
-//         device = (Ganymede__Services__Device__Device*) message;
-//         ESP_LOGI("main", "device.displayName=%s", device->display_name);
-
-//         {
-//             Ganymede__Services__Device__GetConfigRequest request;
-//             ganymede__services__device__get_config_request__init(&request);
-//             request.config_uid = device->config_uid;
-
-//             ERROR_CHECK(grpc_send(
-//                 "/ganymede.services.device.DeviceService/GetConfig",
-//                 (ProtobufCMessage*) &request,
-//                 &ganymede__services__device__config__descriptor,
-//                 poller_config_response_cb
-//             ));
-//         }
-//         {
-//             // Ganymede returns the usual TZ offset (UTC - offset = local) but the
-//             // GNU implementation expects the opposite, so we invert the sign.
-//             int offset = -(device->timezone_offset_minutes);
-//             int min = offset % 60;
-//             int hour = (offset - min) / 60;
-
-//             char tzbuf[32] = { 0 };
-//             sprintf(tzbuf, "XXX%+03d:%02d", hour, min);
-
-//             ESP_LOGI("main", "Set timezone: %s", tzbuf);
-//             setenv("TZ", tzbuf, 1);
-//             tzset();
-//         }
-
-
-//         app_lights_notify_device(device);
-//     } else {
-//         ESP_LOGE("main", "device.displayName=??? status=%d", status);
-//     }
-// }
 
 static void poll_event_handler(void* arg, esp_event_base_t source, int32_t id, void* data)
 {
@@ -115,37 +60,8 @@ static void copy_32bit_bigendian(uint32_t *pdest, const uint32_t *psource)
     dest[3] = source[0];
 }
 
-static void poll_refresh()
+static Ganymede__Services__Device__Device* poll_fetch_device(http2_session_t* session, const struct http_perform_options* options)
 {
-    char* token = malloc(4096);
-    size_t token_len = 4096;
-
-    if (auth_get_token(token, &token_len) != ESP_OK) {
-        free(token);
-        return;
-    }
-
-    struct http_perform_options options = {
-        .authorization = token,
-        .content_type = "application/grpc+proto",
-        .use_grpc_status = true
-    };
-
-    http2_session_t* session = http2_session_acquire(portMAX_DELAY);
-    if (session == NULL) {
-        ESP_LOGE(TAG, "http2 session acquisition failed");
-        http2_session_release(session);
-        free(token);
-        return;
-    }
-    
-    if (http2_session_connect(session, "ganymede.davidbourgault.ca", 443) != ESP_OK) {
-        ESP_LOGE(TAG, "failed to connect to ganymede.davidbourgault.ca:443");
-        http2_session_release(session);
-        free(token);
-        return;
-    }
-
     Ganymede__Services__Device__GetDeviceRequest request;
     ganymede__services__device__get_device_request__init(&request);
     request.device_uid = "632a446ee7bee18fbe08daf2";
@@ -156,20 +72,44 @@ static void poll_refresh()
     copy_32bit_bigendian((uint32_t*)&_payload_buffer[1], &length);
     protobuf_c_message_pack((ProtobufCMessage*)&request, &_payload_buffer[5]);
 
-    ESP_LOGD(TAG, "packed request length+5 = %lu", length);
-
-    int status = http2_perform(session, "POST", "/ganymede.services.device.DeviceService/GetDevice", (const char*) _payload_buffer, length + 5, (char*) _response_buffer, sizeof(_response_buffer), options);
+    int status = http2_perform(session, "POST", "/ganymede.services.device.DeviceService/GetDevice", (const char*) _payload_buffer, length + 5, (char*) _response_buffer, sizeof(_response_buffer), *options);
 
     if (status != 0) {
         ESP_LOGE(TAG, "GetDevice: status=%d", status);
-        http2_session_release(session);
-        free(token);
-        return;
+        return NULL;
     }
 
     copy_32bit_bigendian(&length, (uint32_t*)&_response_buffer[1]);
-    device = (Ganymede__Services__Device__Device*) protobuf_c_message_unpack(&ganymede__services__device__device__descriptor, NULL, length, &_response_buffer[5]);
-    ESP_LOGI("main", "device.displayName=%s", device->display_name);
+    return (Ganymede__Services__Device__Device*) protobuf_c_message_unpack(&ganymede__services__device__device__descriptor, NULL, length, &_response_buffer[5]);
+}
+
+static Ganymede__Services__Device__Config* poll_fetch_config(http2_session_t* session, const struct http_perform_options* options, char* uid)
+{
+    Ganymede__Services__Device__GetConfigRequest request;
+    ganymede__services__device__get_config_request__init(&request);
+    request.config_uid = uid;
+
+    uint32_t length = protobuf_c_message_get_packed_size((ProtobufCMessage*)&request);
+    _payload_buffer[0] = 0;
+    copy_32bit_bigendian((uint32_t*)&_payload_buffer[1], &length);
+    protobuf_c_message_pack((ProtobufCMessage*)&request, &_payload_buffer[5]);
+
+    int status = http2_perform(session, "POST", "/ganymede.services.device.DeviceService/GetConfig", (const char*) _payload_buffer, length + 5, (char*) _response_buffer, sizeof(_response_buffer), *options);
+
+    if (status != 0) {
+        ESP_LOGE(TAG, "GetConfig: status=%d", status);
+        return NULL;
+    }
+
+    copy_32bit_bigendian(&length, (uint32_t*)&_response_buffer[1]);
+    return (Ganymede__Services__Device__Config*) protobuf_c_message_unpack(&ganymede__services__device__config__descriptor, NULL, length, &_response_buffer[5]);
+}
+
+static int poll_set_timezone(const Ganymede__Services__Device__Device* device)
+{
+    if (device == NULL) {
+        return ESP_FAIL;
+    }
 
     // Ganymede returns the usual TZ offset (UTC - offset = local) but the
     // GNU implementation expects the opposite, so we invert the sign.
@@ -184,9 +124,66 @@ static void poll_refresh()
     setenv("TZ", tzbuf, 1);
     tzset();
 
+    return ESP_OK;
+}
+
+static void poll_refresh()
+{
+    Ganymede__Services__Device__Device* device = NULL;
+    Ganymede__Services__Device__Config* config = NULL;
+
+    http2_session_t* session = NULL;
+    char* token = NULL;
+    size_t token_len = 1024;
+
+    if ((token = malloc(token_len)) == NULL) {
+        ESP_LOGE(TAG, "Memory allocation for token failed");
+        return;
+    }
+
+    if (auth_get_token(token, &token_len) != ESP_OK) {
+        goto cleanup;
+    }
+
+    struct http_perform_options options = {
+        .authorization = token,
+        .content_type = "application/grpc+proto",
+        .use_grpc_status = true
+    };
+
+    if ((session = http2_session_acquire(portMAX_DELAY)) == NULL) {
+        ESP_LOGE(TAG, "http2 session acquisition failed");
+        goto cleanup;
+    }
+    
+    if (http2_session_connect(session, CONFIG_GANYMEDE_HOST, 443) != ESP_OK) {
+        ESP_LOGE(TAG, "failed to connect to %s:443", CONFIG_GANYMEDE_HOST);
+        goto cleanup;
+    }
+
+    if ((device = poll_fetch_device(session, &options)) == NULL) {
+        ESP_LOGE(TAG, "failed to fetch device");
+        goto cleanup;
+    }
+
+    ESP_LOGI("main", "device.displayName=%s", device->display_name);
+    poll_set_timezone(device);
+    app_lights_notify_device(device);
+
+    if ((config = poll_fetch_config(session, &options, device->config_uid)) == NULL) {
+        ESP_LOGE(TAG, "failed to fetch config");
+        goto cleanup;
+    }
+
+    ESP_LOGI("main", "config.displayName=%s", config->display_name);
+    app_lights_notify_config(config);
+
+cleanup:
+    protobuf_c_message_free_unpacked((ProtobufCMessage*) config, NULL);
     protobuf_c_message_free_unpacked((ProtobufCMessage*) device, NULL);
     http2_session_release(session);
     free(token);
+    return;
 }
 
 static void poll_task(void* args)
@@ -226,6 +223,11 @@ int app_poll_init()
         return ESP_FAIL;
     }
 
-    ERROR_CHECK(xTaskCreate(&poll_task, "poll_task", POLLER_TASK_STACK_DEPTH, NULL, 4, NULL), pdPASS);
-    return esp_timer_start_periodic(_poll_refresh_timer, 60 * 1000 * 1000);
+    if (xTaskCreate(&poll_task, "poll_task", POLLER_TASK_STACK_DEPTH, NULL, 4, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "Task creation failed");
+        return ESP_FAIL;
+    }
+
+    xEventGroupSetBits(_poll_event_group, POLL_REFRESH_REQUEST_BIT);
+    return esp_timer_start_periodic(_poll_refresh_timer, 60e6);
 }

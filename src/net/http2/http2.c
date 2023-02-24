@@ -10,9 +10,9 @@
 
 #include <nghttp2/nghttp2.h>
 
-static const char* TAG = "http2";
+#define HTTP2_TASK_STACK_DEPTH (1024 * 20)
 
-static SemaphoreHandle_t _http_mutex;
+static const char* TAG = "http2";
 
 struct http2_session {
     esp_tls_t* tls;
@@ -29,9 +29,50 @@ struct http2_session {
     bool use_grpc_status;
 
     char* hostname;
-    int status;
+    int32_t status;
     bool complete;
 };
+
+enum http2_event_type {
+    HTTP2_EVENT_CONNECT,
+    HTTP2_EVENT_PERFORM
+};
+
+struct http2_event_connect {
+    enum http2_event_type type;
+    struct http2_session* session;
+    TaskHandle_t requestor;
+
+    const char* hostname;
+    uint16_t port;
+};
+
+struct http2_event_perform {
+    enum http2_event_type type;
+    struct http2_session* session;
+    TaskHandle_t requestor;
+
+    const char* method;
+    const char* path;
+    const char* payload;
+    size_t payload_len;
+    char* dest;
+    size_t dest_len;
+    struct http_perform_options options;
+};
+
+union http2_event {
+    struct {
+        enum http2_event_type type;
+        struct http2_session* session;
+        TaskHandle_t requestor;
+    };
+    struct http2_event_connect connect;
+    struct http2_event_perform perform;
+};
+
+static SemaphoreHandle_t _http2_mutex;
+static QueueHandle_t _http2_event_queue;
 
 static ssize_t http2_tls_send(nghttp2_session* ng, const uint8_t* data, size_t length, int flags, void* user_data)
 {
@@ -221,43 +262,7 @@ static int http2_ng_init(http2_session_t* session)
     return ESP_OK;
 }
 
-int http2_init()
-{
-    if ((_http_mutex = xSemaphoreCreateMutex()) == NULL) {
-        ESP_LOGE(TAG, "mutex initialization failed");
-        return ESP_FAIL;
-    }
-
-    return ESP_OK;
-}
-
-http2_session_t* http2_session_acquire(const TickType_t ticks_to_wait)
-{
-    if (xSemaphoreTake(_http_mutex, ticks_to_wait) == pdFALSE) {
-        return NULL;
-    }
-
-    http2_session_t* session = malloc(sizeof(http2_session_t));
-    session->tls = NULL;
-    session->ng = NULL;
-    session->hostname = NULL;
-
-    if (http2_tls_init(session) == ESP_FAIL) {
-        ESP_LOGE(TAG, "tls initialization failed");
-        http2_session_release(session);
-        return NULL;
-    }
-
-    if (http2_ng_init(session) == ESP_FAIL) {
-        ESP_LOGE(TAG, "http2 library initialization failed");
-        http2_session_release(session);
-        return NULL;
-    }
-
-    return session;
-}
-
-int http2_session_connect(http2_session_t* session, const char* hostname, uint16_t port)
+static int32_t http2_session_connect_internal(http2_session_t* session, const char* hostname, uint16_t port)
 {
     size_t hostname_length = strlen(hostname);
 
@@ -281,7 +286,7 @@ int http2_session_connect(http2_session_t* session, const char* hostname, uint16
     return nghttp2_submit_settings(session->ng, NGHTTP2_FLAG_NONE, NULL, 0);
 }
 
-int http2_perform(http2_session_t* session, const char* method, const char* path, const char* payload, size_t payload_len, char* dest, size_t dest_len, const struct http_perform_options options)
+static int32_t http2_session_perform_internal(http2_session_t* session, const char* method, const char* path, const char* payload, size_t payload_len, char* dest, size_t dest_len, const struct http_perform_options options)
 {
     if (session == NULL) {
         return -1;
@@ -294,7 +299,7 @@ int http2_perform(http2_session_t* session, const char* method, const char* path
     session->dest = dest;
     session->dest_length = dest_len;
     session->dest_cursor = 0;
-    
+
     session->use_grpc_status = options.use_grpc_status;
 
     session->status = -1;
@@ -345,8 +350,144 @@ int http2_perform(http2_session_t* session, const char* method, const char* path
     return session->status;
 }
 
+static void http2_handle_connect_event(struct http2_event_connect event)
+{
+    int32_t rc = http2_session_connect_internal(event.session, event.hostname, event.port);
+    xTaskNotify(event.requestor, (uint32_t) rc, eSetValueWithOverwrite);
+}
+
+static void http2_handle_perform_event(struct http2_event_perform event)
+{
+    int32_t rc = http2_session_perform_internal(event.session, event.method, event.path, event.payload, event.payload_len, event.dest, event.dest_len, event.options);
+    xTaskNotify(event.requestor, (uint32_t) rc, eSetValueWithOverwrite);
+}
+
+static void http2_task(void* args)
+{
+    (void) args;
+
+    while (true) {
+        union http2_event event;
+
+        if (xQueueReceive(_http2_event_queue, &event, portMAX_DELAY) == pdTRUE) {
+            switch (event.type) {
+            case HTTP2_EVENT_CONNECT:
+                http2_handle_connect_event(event.connect);
+                break;
+            case HTTP2_EVENT_PERFORM:
+                http2_handle_perform_event(event.perform);
+                break;
+            }
+        }
+    }
+}
+
+int http2_init()
+{
+    if ((_http2_mutex = xSemaphoreCreateMutex()) == NULL) {
+        ESP_LOGE(TAG, "Mutex initialization failed");
+        return ESP_FAIL;
+    }
+
+    if ((_http2_event_queue = xQueueCreate(2, sizeof(union http2_event))) == NULL) {
+        ESP_LOGE(TAG, "Event queue initialization failed");
+        return ESP_FAIL;
+    }
+
+    if (xTaskCreate(http2_task, "http2_task", HTTP2_TASK_STACK_DEPTH, NULL, 4, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "Task creation failed");
+        return ESP_FAIL;
+    }
+
+    return ESP_OK;
+}
+
+http2_session_t* http2_session_acquire(const TickType_t ticks_to_wait)
+{
+    if (xSemaphoreTake(_http2_mutex, ticks_to_wait) == pdFALSE) {
+        return NULL;
+    }
+
+    http2_session_t* session = malloc(sizeof(http2_session_t));
+    session->tls = NULL;
+    session->ng = NULL;
+    session->hostname = NULL;
+
+    if (http2_tls_init(session) == ESP_FAIL) {
+        ESP_LOGE(TAG, "tls initialization failed");
+        http2_session_release(session);
+        return NULL;
+    }
+
+    if (http2_ng_init(session) == ESP_FAIL) {
+        ESP_LOGE(TAG, "http2 library initialization failed");
+        http2_session_release(session);
+        return NULL;
+    }
+
+    return session;
+}
+
+int http2_session_connect(http2_session_t* session, const char* hostname, uint16_t port)
+{
+    int32_t rc = ESP_FAIL;
+
+    if (session == NULL || hostname == NULL) {
+        return rc;
+    }
+
+    struct http2_event_connect event = {
+        .type = HTTP2_EVENT_CONNECT,
+        .session = session,
+        .requestor = xTaskGetCurrentTaskHandle(),
+
+        .hostname = hostname,
+        .port = port
+    };
+
+    if (xQueueSend(_http2_event_queue, (void*) &event, portMAX_DELAY) == pdTRUE) {
+        xTaskNotifyWait(0xFFFFFFFF, 0xFFFFFFFF, (uint32_t*) &rc, portMAX_DELAY);
+    }
+
+    return rc;
+}
+
+int http2_perform(http2_session_t* session, const char* method, const char* path, const char* payload, size_t payload_len, char* dest, size_t dest_len, const struct http_perform_options options)
+{
+    int32_t rc = ESP_FAIL;
+
+    if (session == NULL || method == NULL || path == NULL || payload == NULL || dest == NULL) {
+        return rc;
+    }
+
+
+    struct http2_event_perform event = {
+        .type = HTTP2_EVENT_PERFORM,
+        .session = session,
+        .requestor = xTaskGetCurrentTaskHandle(),
+
+        .method = method,
+        .path = path,
+        .payload = payload,
+        .payload_len = payload_len,
+        .dest = dest,
+        .dest_len = dest_len,
+        .options = options
+    };
+
+    if (xQueueSend(_http2_event_queue, (void*) &event, portMAX_DELAY) == pdTRUE) {
+        xTaskNotifyWait(0xFFFFFFFF, 0xFFFFFFFF, (uint32_t*) &rc, portMAX_DELAY);
+    }
+
+    return rc;
+}
+
 int http2_session_release(http2_session_t* session)
 {
+    if (session == NULL) {
+        return ESP_OK;
+    }
+
     if (session->hostname != NULL) {
         free(session->hostname);
     }
@@ -361,6 +502,6 @@ int http2_session_release(http2_session_t* session)
 
     free(session);
 
-    xSemaphoreGive(_http_mutex);
+    xSemaphoreGive(_http2_mutex);
     return ESP_OK;
 }

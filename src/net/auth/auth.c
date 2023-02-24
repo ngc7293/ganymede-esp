@@ -2,7 +2,6 @@
 
 #include <string.h>
 
-#include <esp_heap_trace.h>
 #include <esp_log.h>
 #include <esp_timer.h>
 #include <esp_wifi.h>
@@ -18,7 +17,7 @@
 #include <api/error.h>
 #include <net/http2/http2.h>
 
-#define AUTH_TASK_STACK_DEPTH (1024 * 20)
+#define AUTH_TASK_STACK_DEPTH (1024 * 2)
 
 #define AUTH_CONNECTED_BIT BIT0
 #define AUTH_REFRESH_REQUEST_BIT BIT1
@@ -87,8 +86,6 @@ static int auth_write_credentials_to_storage(const char* access_token, const cha
 
 static int auth_perform_refresh()
 {
-    heap_trace_start(HEAP_TRACE_LEAKS);
-
     static char refresh_token[512] = {0};
     size_t refresh_token_len = 512;
 
@@ -133,15 +130,11 @@ static int auth_perform_refresh()
 
     ESP_LOGI(TAG, "Refreshed Access Token");
     http2_session_release(session);
-    heap_trace_stop();
-    heap_trace_dump();
     return ESP_OK;
 }
 
 static int auth_perform_interactive_register(void)
 {
-    heap_trace_start(HEAP_TRACE_LEAKS);
-
     int status = -1;
     cJSON* json = NULL;
 
@@ -208,8 +201,6 @@ static int auth_perform_interactive_register(void)
     }
 
     http2_session_release(session);
-    heap_trace_stop();
-    heap_trace_dump();
     return ESP_OK;
 }
 
@@ -264,7 +255,9 @@ int auth_init(void)
     }
 
     ERROR_CHECK(xTaskCreate(&auth_task, "auth_task", AUTH_TASK_STACK_DEPTH, NULL, 6, NULL), pdPASS);
-    return esp_timer_start_periodic(_auth_refresh_timer, 60 * 1000 * 1000);
+    xEventGroupSetBits(_auth_event_group, AUTH_REFRESH_REQUEST_BIT);
+
+    return esp_timer_start_periodic(_auth_refresh_timer, 3600e6);
 }
 
 int auth_request_register(void)

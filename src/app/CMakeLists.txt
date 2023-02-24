@@ -1,6 +1,6 @@
 add_library(ganymede.core
-    # lights.c
-    # lights.h
+    lights.c
+    lights.h
     poll.c
     poll.h
 )
@@ -17,9 +17,12 @@ target_link_libraries(ganymede.core
         net.auth
         net.wifi
         idf::log
+        idf::driver
         idf::esp_wifi
         idf::esp_timer
 )
+
+target_kconfig(ganymede.core Kconfig)
 
 add_executable(ganymede
     main.c
@@ -42,5 +45,3 @@ target_link_libraries(ganymede
         idf::log
         idf::nvs_flash
 )
-
-# add_subdirectory(tests)

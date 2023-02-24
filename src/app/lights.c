@@ -13,7 +13,9 @@
 
 #include "lights.h"
 
-#define LIGHTS_TASK_STACK_DEPTH (1024 * 10)
+#define LIGHTS_TASK_STACK_DEPTH (1024 * 2)
+
+const char* TAG = "lights";
 
 static Ganymede__Services__Device__LightConfig* incoming_light_config = NULL;
 static uint8_t buffer[1024];
@@ -43,7 +45,7 @@ static void lights_recompute(struct tm* timeinfo, Ganymede__Services__Device__Li
         }
 
         gpio_set_level(luminaire->port, !active);
-        ESP_LOGD("lights", "%02d:%02d:%02d port=%lu active=%s", timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec, luminaire->port, active ? "true" : "false");
+        ESP_LOGD(TAG, "%02d:%02d:%02d port=%lu active=%s", timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec, luminaire->port, active ? "true" : "false");
     }
 }
 
@@ -91,7 +93,7 @@ static int lights_reconfigure_gpio(Ganymede__Services__Device__LightConfig* old_
             ERROR_CHECK(gpio_set_level(port, true));
             ERROR_CHECK(gpio_config(&pin_config));
 
-            ESP_LOGD("lights", "enabled gpio port %lu", port);
+            ESP_LOGD(TAG, "enabled gpio port %lu", port);
         }
     }
 
@@ -104,7 +106,7 @@ static void lights_task(void* args)
     Ganymede__Services__Device__LightConfig* light_config = NULL;
 
     while (incoming_light_config == NULL) {
-        ESP_LOGD("lights", "incoming_light_config=%p, waiting 10s", incoming_light_config);
+        ESP_LOGD(TAG, "incoming_light_config=%p, waiting 10s", incoming_light_config);
         vTaskDelay(10000 / portTICK_PERIOD_MS);
     }
 
@@ -131,7 +133,10 @@ static void lights_task(void* args)
 
 int app_lights_init(void)
 {
-    ERROR_CHECK(xTaskCreate(&lights_task, "lights_task", LIGHTS_TASK_STACK_DEPTH, NULL, 3, NULL), pdPASS);
+    if (xTaskCreate(&lights_task, "lights_task", LIGHTS_TASK_STACK_DEPTH, NULL, 3, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "Task creation failed");
+        return ESP_FAIL;
+    }
     return ESP_OK;
 }
 

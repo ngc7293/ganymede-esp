@@ -19,7 +19,6 @@
 #include <net/http2/http2.h>
 #include <net/wifi/wifi.h>
 
-
 static int _nvs_try_init()
 {
     esp_err_t rc = nvs_flash_init();
@@ -37,21 +36,14 @@ void app_main(void)
     ERROR_CHECK(esp_event_loop_create_default());
     ERROR_CHECK(_nvs_try_init());
 
-
     // NVS
     {
         nvs_handle_t nvs;
         ERROR_CHECK(nvs_open("nvs", NVS_READWRITE, &nvs));
-        ERROR_CHECK(nvs_set_str(nvs, "wifi-ssid", "eduroam"));
-        ERROR_CHECK(nvs_set_str(nvs, "wifi-password", "how did this happen?"));
+        ERROR_CHECK(nvs_set_str(nvs, "wifi-ssid", CONFIG_WIFI_SSID));
+        ERROR_CHECK(nvs_set_str(nvs, "wifi-password", CONFIG_WIFI_PASSPRHASE));
         nvs_close(nvs);
     }
-
-    ERROR_CHECK(http2_init());
-
-    // ERROR_CHECK(grpc_init());
-    ERROR_CHECK(auth_init());
-    ERROR_CHECK(wifi_init());
 
     // SNTP
     {
@@ -60,8 +52,11 @@ void app_main(void)
         sntp_init();
     }
 
-    app_poll_init();
-    // app_lights_init();
+    ERROR_CHECK(http2_init());
+    ERROR_CHECK(app_lights_init());
+    ERROR_CHECK(app_poll_init());
+    ERROR_CHECK(auth_init());
+    ERROR_CHECK(wifi_init());
 
     size_t cursor = 0;
     char linebuf[128];
@@ -76,9 +71,8 @@ void app_main(void)
                 linebuf[cursor] = '\0';
                 cursor = 0;
 
-                if (strncmp(linebuf, "wifi", 4) == 0) {
-                    puts("wifi options: ");
-                    puts("  login <ssid> <passphrase>");
+                if (strcmp(linebuf, "register") == 0) {
+                    auth_request_register();
                 }
             } else {
                 linebuf[cursor++] = (char) c;

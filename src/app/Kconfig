@@ -1,0 +1,6 @@
+menu "Poll"
+
+    config GANYMEDE_HOST
+        string "Ganymede services hostname"
+        default "ganymede.davidbourgault.ca"
+endmenu
