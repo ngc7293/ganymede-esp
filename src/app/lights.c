@@ -17,10 +17,10 @@
 
 const char* TAG = "lights";
 
-static Ganymede__Services__Device__LightConfig* incoming_light_config = NULL;
+static Ganymede__V2__LightConfig* incoming_light_config = NULL;
 static uint8_t buffer[1024];
 
-static bool lights_is_in_schedule(struct tm* timeinfo, Ganymede__Services__Device__Luminaire__DailySchedule* schedule)
+static bool lights_is_in_schedule(struct tm* timeinfo, Ganymede__V2__Luminaire__DailySchedule* schedule)
 {
     uint32_t now_sec = timeinfo->tm_hour * 3600 + timeinfo->tm_min * 60 + timeinfo->tm_sec;
     uint32_t start_sec = schedule->start->hour * 3600 + schedule->start->minute * 60 + schedule->start->second;
@@ -29,10 +29,10 @@ static bool lights_is_in_schedule(struct tm* timeinfo, Ganymede__Services__Devic
     return (start_sec <= now_sec && now_sec < stop_sec);
 }
 
-static void lights_recompute(struct tm* timeinfo, Ganymede__Services__Device__LightConfig* light_config)
+static void lights_recompute(struct tm* timeinfo, Ganymede__V2__LightConfig* light_config)
 {
     for (size_t lum_idx = 0; lum_idx < light_config->n_luminaires; lum_idx++) {
-        Ganymede__Services__Device__Luminaire* luminaire = light_config->luminaires[lum_idx];
+        Ganymede__V2__Luminaire* luminaire = light_config->luminaires[lum_idx];
         bool active = false;
 
         size_t pp_idx = 0;
@@ -49,7 +49,7 @@ static void lights_recompute(struct tm* timeinfo, Ganymede__Services__Device__Li
     }
 }
 
-static uint64_t lights_compute_pin_mask(Ganymede__Services__Device__LightConfig* config)
+static uint64_t lights_compute_pin_mask(Ganymede__V2__LightConfig* config)
 {
     uint64_t pin_mask = 0;
 
@@ -62,7 +62,7 @@ static uint64_t lights_compute_pin_mask(Ganymede__Services__Device__LightConfig*
     return pin_mask;
 }
 
-static int lights_reconfigure_gpio(Ganymede__Services__Device__LightConfig* old_config, Ganymede__Services__Device__LightConfig* new_config)
+static int lights_reconfigure_gpio(Ganymede__V2__LightConfig* old_config, Ganymede__V2__LightConfig* new_config)
 {
     uint64_t old_pins = lights_compute_pin_mask(old_config);
     uint64_t new_pins = lights_compute_pin_mask(new_config);
@@ -103,7 +103,7 @@ static int lights_reconfigure_gpio(Ganymede__Services__Device__LightConfig* old_
 static void lights_task(void* args)
 {
     (void) args;
-    Ganymede__Services__Device__LightConfig* light_config = NULL;
+    Ganymede__V2__LightConfig* light_config = NULL;
 
     while (incoming_light_config == NULL) {
         ESP_LOGD(TAG, "incoming_light_config=%p, waiting 10s", incoming_light_config);
@@ -140,16 +140,16 @@ int app_lights_init(void)
     return ESP_OK;
 }
 
-int app_lights_notify_device(Ganymede__Services__Device__Device* device)
+int app_lights_notify_device(Ganymede__V2__Device* device)
 {
     (void) device;
     return ESP_OK;
 }
 
-int app_lights_notify_config(Ganymede__Services__Device__Config* config)
+int app_lights_notify_config(Ganymede__V2__Config* config)
 {
     // FIXME: This is a hack to quickly deep-clone, but it is not performance efficient
     size_t size = protobuf_c_message_pack((ProtobufCMessage*) config->light_config, buffer);
-    incoming_light_config = (Ganymede__Services__Device__LightConfig*) protobuf_c_message_unpack(&ganymede__services__device__light_config__descriptor, NULL, size, buffer);
+    incoming_light_config = (Ganymede__V2__LightConfig*) protobuf_c_message_unpack(&ganymede__v2__light_config__descriptor, NULL, size, buffer);
     return ESP_OK;
 }

@@ -44,12 +44,21 @@ function (generate_protobuf_c)
 endfunction()
 
 
+add_library(api.google
+    STATIC
+        google/protobuf/empty.proto
+        google/protobuf/timestamp.proto
+)
+generate_protobuf_c(TARGET api.google)
 
-add_library(api.ganymede.service.device STATIC ganymede/services/device/device.proto)
-generate_protobuf_c(TARGET api.ganymede.service.device)
 
-add_library(api.ganymede.service.measurements STATIC ganymede/services/measurements/measurements.proto)
-generate_protobuf_c(TARGET api.ganymede.service.measurements)
+add_library(api.ganymede
+    STATIC
+        ganymede/v2/device.proto
+        ganymede/v2/measurements.proto
+)
+target_link_libraries(api.ganymede PUBLIC api.google)
+generate_protobuf_c(TARGET api.ganymede)
 
 add_library(api.grpc.health.v1 STATIC grpc/health/v1/health.proto)
 generate_protobuf_c(TARGET api.grpc.health.v1)

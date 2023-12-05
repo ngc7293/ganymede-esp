@@ -28,7 +28,6 @@ struct http2_session {
 
     bool use_grpc_status;
 
-    char* hostname;
     int32_t status;
     bool complete;
 };
@@ -53,6 +52,7 @@ struct http2_event_perform {
     TaskHandle_t requestor;
 
     const char* method;
+    const char* authority;
     const char* path;
     const char* payload;
     size_t payload_len;
@@ -274,22 +274,34 @@ static int32_t http2_session_connect_internal(http2_session_t* session, const ch
         .timeout_ms = 5 * 1000
     };
 
-    if (esp_tls_conn_new_sync(hostname, hostname_length, port, &config, session->tls) == -1) {
+    if (esp_tls_conn_new_sync(hostname, hostname_length, port, &config, session->tls) == ESP_FAIL) {
         return ESP_FAIL;
     }
 
     ESP_LOGD(TAG, "connected");
-
-    session->hostname = (char*) malloc(hostname_length);
-    strcpy(session->hostname, hostname);
-
     return nghttp2_submit_settings(session->ng, NGHTTP2_FLAG_NONE, NULL, 0);
 }
 
-static int32_t http2_session_perform_internal(http2_session_t* session, const char* method, const char* path, const char* payload, size_t payload_len, char* dest, size_t dest_len, const struct http_perform_options options)
+static int32_t http2_session_check_tls_conn(http2_session_t* session)
+{
+    esp_tls_conn_state_t state;
+
+    if (esp_tls_get_conn_state(session->tls, &state) == ESP_FAIL || state != ESP_TLS_DONE) {
+        return ESP_FAIL;
+    }
+
+    return ESP_OK;
+}
+
+static int32_t http2_session_perform_internal(http2_session_t* session, const char* method, const char* authority, const char* path, const char* payload, size_t payload_len, char* dest, size_t dest_len, const struct http_perform_options options)
 {
     if (session == NULL) {
         return -1;
+    }
+
+    if (http2_session_check_tls_conn(session) == ESP_FAIL) {
+        ESP_LOGE(TAG, "TLS connection not ok");
+        return ESP_FAIL;
     }
 
     session->payload = (char*) payload;
@@ -312,7 +324,7 @@ static int32_t http2_session_perform_internal(http2_session_t* session, const ch
         http2_make_header(":method", method),
         http2_make_header_static(":scheme", "https"),
         http2_make_header(":path", path),
-        http2_make_header_static(":authority", session->hostname),
+        http2_make_header_static(":authority", authority),
         http2_make_header("content-length", content_length),
         http2_make_header("content-type", options.content_type),
         http2_make_header("authorization",  options.authorization),
@@ -330,7 +342,7 @@ static int32_t http2_session_perform_internal(http2_session_t* session, const ch
         return -1;
     }
 
-    ESP_LOGD(TAG, "%s %s%s", method, session->hostname, path);
+    ESP_LOGD(TAG, "%s %s%s", method, authority, path);
 
     int64_t end = esp_timer_get_time() + (5e6);
     do {
@@ -358,7 +370,7 @@ static void http2_handle_connect_event(struct http2_event_connect event)
 
 static void http2_handle_perform_event(struct http2_event_perform event)
 {
-    int32_t rc = http2_session_perform_internal(event.session, event.method, event.path, event.payload, event.payload_len, event.dest, event.dest_len, event.options);
+    int32_t rc = http2_session_perform_internal(event.session, event.method, event.authority, event.path, event.payload, event.payload_len, event.dest, event.dest_len, event.options);
     xTaskNotify(event.requestor, (uint32_t) rc, eSetValueWithOverwrite);
 }
 
@@ -411,7 +423,6 @@ http2_session_t* http2_session_acquire(const TickType_t ticks_to_wait)
     http2_session_t* session = malloc(sizeof(http2_session_t));
     session->tls = NULL;
     session->ng = NULL;
-    session->hostname = NULL;
 
     if (http2_tls_init(session) == ESP_FAIL) {
         ESP_LOGE(TAG, "tls initialization failed");
@@ -452,11 +463,11 @@ int http2_session_connect(http2_session_t* session, const char* hostname, uint16
     return rc;
 }
 
-int http2_perform(http2_session_t* session, const char* method, const char* path, const char* payload, size_t payload_len, char* dest, size_t dest_len, const struct http_perform_options options)
+int http2_perform(http2_session_t* session, const char* method, const char* authority, const char* path, const char* payload, size_t payload_len, char* dest, size_t dest_len, const struct http_perform_options options)
 {
     int32_t rc = ESP_FAIL;
 
-    if (session == NULL || method == NULL || path == NULL || payload == NULL || dest == NULL) {
+    if (session == NULL || method == NULL || authority == NULL || path == NULL || payload == NULL || dest == NULL) {
         return rc;
     }
 
@@ -467,6 +478,7 @@ int http2_perform(http2_session_t* session, const char* method, const char* path
         .requestor = xTaskGetCurrentTaskHandle(),
 
         .method = method,
+        .authority = authority,
         .path = path,
         .payload = payload,
         .payload_len = payload_len,
@@ -486,10 +498,6 @@ int http2_session_release(http2_session_t* session)
 {
     if (session == NULL) {
         return ESP_OK;
-    }
-
-    if (session->hostname != NULL) {
-        free(session->hostname);
     }
 
     if (session->ng != NULL) {

@@ -113,7 +113,7 @@ static int auth_perform_refresh()
         http2_session_release(session);
         return ESP_FAIL;
     }
-    status = http2_perform(session, "POST", "/oauth/token", _payload_buffer, strlen(_payload_buffer), (char*) _response_buffer, sizeof(_response_buffer), options);
+    status = http2_perform(session, "POST", CONFIG_AUTH_AUTH0_HOSTNAME, "/oauth/token", _payload_buffer, strlen(_payload_buffer), (char*) _response_buffer, sizeof(_response_buffer), options);
     
     if (status == 200) {
         json = cJSON_Parse((const char*)_response_buffer);
@@ -158,7 +158,7 @@ static int auth_perform_interactive_register(void)
         return ESP_FAIL;
     }
 
-    status = http2_perform(session, "POST", "/oauth/device/code", DEVICE_TOKEN_REQUEST_PAYLOAD, strlen(DEVICE_TOKEN_REQUEST_PAYLOAD), (char*) _response_buffer, sizeof(_response_buffer), options);
+    status = http2_perform(session, "POST", CONFIG_AUTH_AUTH0_HOSTNAME, "/oauth/device/code", DEVICE_TOKEN_REQUEST_PAYLOAD, strlen(DEVICE_TOKEN_REQUEST_PAYLOAD), (char*) _response_buffer, sizeof(_response_buffer), options);
 
     if (status / 100 != 2) {
         ESP_LOGE(TAG, "auth0 returned non-200 status: %d message=%s", status, _response_buffer);
@@ -182,7 +182,7 @@ static int auth_perform_interactive_register(void)
 
     while (esp_timer_get_time() < end) {
         vTaskDelay((interval * 1000) / portTICK_PERIOD_MS);
-        status = http2_perform(session, "POST", "/oauth/token", _payload_buffer, strlen(_payload_buffer), (char*) _response_buffer, sizeof(_response_buffer), options);
+        status = http2_perform(session, "POST", CONFIG_AUTH_AUTH0_HOSTNAME, "/oauth/token", _payload_buffer, strlen(_payload_buffer), (char*) _response_buffer, sizeof(_response_buffer), options);
 
         if (status / 100 == 2) {
             break;

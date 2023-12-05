@@ -1,3 +1,4 @@
+#include <string.h>
 #include <time.h>
 
 #include <esp_log.h>
@@ -12,7 +13,7 @@
 #include <app/lights.h>
 #include <net/auth/auth.h>
 #include <net/http2/http2.h>
-#include <ganymede/services/device/device.pb-c.h>
+#include <ganymede/v2/device.pb-c.h>
 
 #include "poll.h"
 
@@ -50,7 +51,7 @@ static void poll_timer_callback(void* args)
     xEventGroupSetBits(_poll_event_group, POLL_REFRESH_REQUEST_BIT);
 }
 
-static void copy_32bit_bigendian(uint32_t *pdest, const uint32_t *psource)
+static void _copy_32bit_bigendian(uint32_t *pdest, const uint32_t *psource)
 {
     const unsigned char *source = (const unsigned char *) psource;
     unsigned char *dest = (unsigned char *) pdest;
@@ -60,52 +61,57 @@ static void copy_32bit_bigendian(uint32_t *pdest, const uint32_t *psource)
     dest[3] = source[0];
 }
 
-static Ganymede__Services__Device__Device* poll_fetch_device(http2_session_t* session, const struct http_perform_options* options)
+static size_t _pack_protobuf(ProtobufCMessage* request, uint8_t* buffer)
 {
-    Ganymede__Services__Device__GetDeviceRequest request;
-    ganymede__services__device__get_device_request__init(&request);
-    request.device_uid = "632a446ee7bee18fbe08daf2";
-    request.filter_case = GANYMEDE__SERVICES__DEVICE__GET_DEVICE_REQUEST__FILTER_DEVICE_UID;
+    uint32_t length = protobuf_c_message_get_packed_size(request);
 
-    uint32_t length = protobuf_c_message_get_packed_size((ProtobufCMessage*)&request);
-    _payload_buffer[0] = 0;
-    copy_32bit_bigendian((uint32_t*)&_payload_buffer[1], &length);
-    protobuf_c_message_pack((ProtobufCMessage*)&request, &_payload_buffer[5]);
+    buffer[0] = 0;
+    _copy_32bit_bigendian((uint32_t*)&buffer[1], &length);
+    protobuf_c_message_pack(request, &buffer[5]);
 
-    int status = http2_perform(session, "POST", "/ganymede.services.device.DeviceService/GetDevice", (const char*) _payload_buffer, length + 5, (char*) _response_buffer, sizeof(_response_buffer), *options);
+    return length;
+}
+
+static Ganymede__V2__Device* poll_fetch_device(http2_session_t* session, const struct http_perform_options* options)
+{
+    Ganymede__V2__GetDeviceRequest request;
+    ganymede__v2__get_device_request__init(&request);
+    request.device_uid = CONFIG_GANYMEDE_DEVICE_ID;
+    request.filter_case = GANYMEDE__V2__GET_DEVICE_REQUEST__FILTER_DEVICE_UID;
+
+    uint32_t length = _pack_protobuf((ProtobufCMessage*)&request, _payload_buffer);
+
+    int status = http2_perform(session, "POST", CONFIG_GANYMEDE_AUTHORITY, "/ganymede.v2.DeviceService/GetDevice", (const char*) _payload_buffer, length + 5, (char*) _response_buffer, sizeof(_response_buffer), *options);
 
     if (status != 0) {
         ESP_LOGE(TAG, "GetDevice: status=%d", status);
         return NULL;
     }
 
-    copy_32bit_bigendian(&length, (uint32_t*)&_response_buffer[1]);
-    return (Ganymede__Services__Device__Device*) protobuf_c_message_unpack(&ganymede__services__device__device__descriptor, NULL, length, &_response_buffer[5]);
+    _copy_32bit_bigendian(&length, (uint32_t*)&_response_buffer[1]);
+    return (Ganymede__V2__Device*) protobuf_c_message_unpack(&ganymede__v2__device__descriptor, NULL, length, &_response_buffer[5]);
 }
 
-static Ganymede__Services__Device__Config* poll_fetch_config(http2_session_t* session, const struct http_perform_options* options, char* uid)
+static Ganymede__V2__Config* poll_fetch_config(http2_session_t* session, const struct http_perform_options* options, char* uid)
 {
-    Ganymede__Services__Device__GetConfigRequest request;
-    ganymede__services__device__get_config_request__init(&request);
+    Ganymede__V2__GetConfigRequest request;
+    ganymede__v2__get_config_request__init(&request);
     request.config_uid = uid;
 
-    uint32_t length = protobuf_c_message_get_packed_size((ProtobufCMessage*)&request);
-    _payload_buffer[0] = 0;
-    copy_32bit_bigendian((uint32_t*)&_payload_buffer[1], &length);
-    protobuf_c_message_pack((ProtobufCMessage*)&request, &_payload_buffer[5]);
+    uint32_t length = _pack_protobuf((ProtobufCMessage*)&request, _payload_buffer);
 
-    int status = http2_perform(session, "POST", "/ganymede.services.device.DeviceService/GetConfig", (const char*) _payload_buffer, length + 5, (char*) _response_buffer, sizeof(_response_buffer), *options);
+    int status = http2_perform(session, "POST", CONFIG_GANYMEDE_AUTHORITY, "/ganymede.v2.DeviceService/GetConfig", (const char*) _payload_buffer, length + 5, (char*) _response_buffer, sizeof(_response_buffer), *options);
 
     if (status != 0) {
         ESP_LOGE(TAG, "GetConfig: status=%d", status);
         return NULL;
     }
 
-    copy_32bit_bigendian(&length, (uint32_t*)&_response_buffer[1]);
-    return (Ganymede__Services__Device__Config*) protobuf_c_message_unpack(&ganymede__services__device__config__descriptor, NULL, length, &_response_buffer[5]);
+    _copy_32bit_bigendian(&length, (uint32_t*)&_response_buffer[1]);
+    return (Ganymede__V2__Config*) protobuf_c_message_unpack(&ganymede__v2__config__descriptor, NULL, length, &_response_buffer[5]);
 }
 
-static int poll_set_timezone(const Ganymede__Services__Device__Device* device)
+static int poll_set_timezone(const Ganymede__V2__Device* device)
 {
     if (device == NULL) {
         return ESP_FAIL;
@@ -129,8 +135,8 @@ static int poll_set_timezone(const Ganymede__Services__Device__Device* device)
 
 static void poll_refresh()
 {
-    Ganymede__Services__Device__Device* device = NULL;
-    Ganymede__Services__Device__Config* config = NULL;
+    Ganymede__V2__Device* device = NULL;
+    Ganymede__V2__Config* config = NULL;
 
     http2_session_t* session = NULL;
     char* token = NULL;
@@ -141,7 +147,9 @@ static void poll_refresh()
         return;
     }
 
-    if (auth_get_token(token, &token_len) != ESP_OK) {
+    strcpy(token, "Bearer ");
+
+    if (auth_get_token(&token[7], &token_len) != ESP_OK) {
         goto cleanup;
     }
 

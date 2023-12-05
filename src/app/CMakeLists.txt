@@ -13,7 +13,7 @@ target_compile_options(ganymede.core
 
 target_link_libraries(ganymede.core
     PUBLIC
-        api.ganymede.service.device
+        api.ganymede
         net.auth
         net.wifi
         idf::log

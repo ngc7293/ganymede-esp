@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+package ganymede.v2;
+
+// Service
+service MeasurementsService {
+    rpc PushMeasurements(PushMeasurementsRequest) returns (google.protobuf.Empty);
+    rpc GetMeasurements(GetMeasurementsRequest) returns (GetMeasurementsResponse);
+}
+
+// Requests and responses
+message PushMeasurementsRequest {
+    repeated Measurement measurements = 1;
+}
+
+message GetMeasurementsRequest {
+    string device_id = 1;
+
+    google.protobuf.Timestamp from = 2;
+    google.protobuf.Timestamp to = 3;
+}
+
+message GetMeasurementsResponse {
+    repeated Measurement measurements = 1;
+}
+
+// Primitive message types
+message AtmosphericMeasurements {
+    float temperature = 1;  // In Celsius
+    float humidity = 2;     // In RH %
+}
+
+message Measurement {
+    string device_id = 1;
+    google.protobuf.Timestamp timestamp = 2;
+
+    AtmosphericMeasurements atmosphere = 10;
+}
