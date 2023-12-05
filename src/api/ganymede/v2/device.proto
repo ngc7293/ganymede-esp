@@ -1,6 +1,8 @@
 syntax = "proto3";
 
-package ganymede.services.device;
+import "google/protobuf/empty.proto";
+
+package ganymede.v2;
 
 // Service definition
 service DeviceService {
@@ -8,13 +10,13 @@ service DeviceService {
     rpc UpdateDevice(UpdateDeviceRequest) returns (Device);
     rpc GetDevice(GetDeviceRequest) returns (Device);
     rpc ListDevice(ListDeviceRequest) returns (ListDeviceResponse);
-    rpc DeleteDevice(DeleteDeviceRequest) returns (Empty);
+    rpc DeleteDevice(DeleteDeviceRequest) returns (google.protobuf.Empty);
 
     rpc CreateConfig(CreateConfigRequest) returns (Config);
     rpc UpdateConfig(UpdateConfigRequest) returns (Config);
     rpc GetConfig(GetConfigRequest) returns (Config);
     rpc ListConfig(ListConfigRequest) returns (ListConfigResponse);
-    rpc DeleteConfig(DeleteConfigRequest) returns (Empty);
+    rpc DeleteConfig(DeleteConfigRequest) returns (google.protobuf.Empty);
 }
 
 // Requests and responses
@@ -80,8 +82,6 @@ message DeleteConfigResponse {
 
 }
 
-message Empty { }
-
 // Primitive message types
 message Device {
     // Output only.
@@ -109,24 +109,6 @@ message Time {
     uint32 second = 3;
 }
 
-// Sets target values for the solution flow
-message PompConfig {
-    // In Liters per Minute
-    float flow = 1;
-}
-
-// Sets target values for the solution
-message SolutionConfig {
-    // [0-14]
-    float ph = 1;
-
-    // In ???
-    float ec = 2;
-
-    // In Celsius
-    float temperature = 3;
-}
-
 message Luminaire {
     message DailySchedule {
         Time start = 1;
@@ -152,7 +134,7 @@ message Config {
 
     string display_name = 2;
 
-    PompConfig     pomp_config     = 10;
-    SolutionConfig solution_config = 11;
-    LightConfig    light_config    = 12;
+    reserved 10, 11;
+    reserved "pomp_config", "solution_config";
+    LightConfig light_config = 12;
 }

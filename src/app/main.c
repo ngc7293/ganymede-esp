@@ -3,6 +3,7 @@
 
 #include <esp_event.h>
 #include <esp_log.h>
+#include <esp_sntp.h>
 
 #include <nvs_flash.h>
 
@@ -10,7 +11,6 @@
 #include <driver/gpio.h>
 #include <driver/uart.h>
 
-#include <sntp/sntp.h>
 
 #include <api/error.h>
 #include <app/lights.h>
@@ -45,18 +45,18 @@ void app_main(void)
         nvs_close(nvs);
     }
 
+    ERROR_CHECK(wifi_init());
+    ERROR_CHECK(http2_init());
+    ERROR_CHECK(auth_init());
+    ERROR_CHECK(app_poll_init());
+    ERROR_CHECK(app_lights_init());
+
     // SNTP
     {
-        sntp_setoperatingmode(SNTP_OPMODE_POLL);
-        sntp_setservername(0, "pool.ntp.org");
-        sntp_init();
+        esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+        esp_sntp_setservername(0, "pool.ntp.org");
+        esp_sntp_init();
     }
-
-    ERROR_CHECK(http2_init());
-    ERROR_CHECK(app_lights_init());
-    ERROR_CHECK(app_poll_init());
-    ERROR_CHECK(auth_init());
-    ERROR_CHECK(wifi_init());
 
     size_t cursor = 0;
     char linebuf[128];
