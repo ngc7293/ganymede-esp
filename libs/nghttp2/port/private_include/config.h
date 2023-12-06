@@ -9,8 +9,14 @@
 #include "stdlib.h"
 #include "string.h"
 
+/* Define to 1 if you have the `clock_gettime' function. */
+#define HAVE_CLOCK_GETTIME 1
+
+/* Define to 1 if you have the <time.h> header file. */
+#define HAVE_TIME_H 1
+
 #if (!defined(nghttp_unlikely))
-#define nghttp_unlikely(Expression)	!!(Expression)
+#define nghttp_unlikely(Expression) !!(Expression)
 #endif
 
 #define nghttp_ASSERT(Expression) do{if (!(Expression)) printf("%d\n", __LINE__);}while(0)

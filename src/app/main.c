@@ -4,6 +4,7 @@
 #include <esp_event.h>
 #include <esp_log.h>
 #include <esp_sntp.h>
+#include <esp_heap_caps.h>
 
 #include <nvs_flash.h>
 
@@ -29,6 +30,15 @@ static int _nvs_try_init()
     }
 
     return rc;
+}
+
+static void report_memory()
+{
+    uint32_t available = heap_caps_get_free_size(MALLOC_CAP_DEFAULT);
+    uint32_t total = heap_caps_get_total_size(MALLOC_CAP_DEFAULT);
+    uint32_t largest_block = heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT);
+
+    printf("Memory: Available %lu/%lu (Largest %lu)\n", available, total, largest_block);
 }
 
 void app_main(void)
@@ -73,6 +83,10 @@ void app_main(void)
 
                 if (strcmp(linebuf, "register") == 0) {
                     auth_request_register();
+                }
+
+                if (strcmp(linebuf, "memory") == 0) {
+                    report_memory();
                 }
             } else {
                 linebuf[cursor++] = (char) c;

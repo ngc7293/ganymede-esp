@@ -2,6 +2,7 @@
 
 #include <string.h>
 
+#include <esp_log.h>
 #include <esp_wifi.h>
 #include <nvs_flash.h>
 
@@ -15,6 +16,8 @@
 
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT BIT1
+
+static const char* TAG = "wifi";
 
 EventGroupHandle_t _wifi_event_group = NULL;
 
@@ -95,11 +98,11 @@ static void _wifi_task(void* args)
         xEventGroupClearBits(_wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
 
         if (bits & WIFI_CONNECTED_BIT) {
-            printf("[wifi] connected\n");
+            ESP_LOGI(TAG, "connected");
         } else if (bits & WIFI_FAIL_BIT) {
-            printf("[wifi] connection failure\n");
+            ESP_LOGE(TAG, "connection failure");
         } else {
-            printf("[wifi] unexpected events bits: 0x%lx\n", bits);
+            ESP_LOGE(TAG, "unexpected events bits: 0x%lx", bits);
         }
     }
 }

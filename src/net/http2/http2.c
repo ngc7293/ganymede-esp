@@ -471,7 +471,6 @@ int http2_perform(http2_session_t* session, const char* method, const char* auth
         return rc;
     }
 
-
     struct http2_event_perform event = {
         .type = HTTP2_EVENT_PERFORM,
         .session = session,
