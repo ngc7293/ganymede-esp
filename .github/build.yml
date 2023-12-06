@@ -1,0 +1,32 @@
+name: Build
+
+on: push
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    container: espressif/idf:v5.1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      
+      - name: install protobuf
+        run: apt-get update && apt-get install protobuf-compiler -y
+
+      - name: install protobuf-c
+        run: |
+          git clone https://github.com/protobuf-c/protobuf-c /libs/protobuf-c
+          cd /libs/protobuf-c
+          ./autogen.sh
+          ./configure --prefix=/usr
+          make
+          make install
+
+      - name: configure
+        working-directory: ./_build
+        run: cmake .. -G Ninja -DCMAKE_TOOLCHAIN_FILE=/opt/esp/idf/tools/cmake/toolchain-esp32s2.cmake -DTARGET=esp32s2 -DPYTHON=/opt/esp/python_env/idf5.1_py3.8_env/bin/python
+
+      - name: build
+        working-directory: ./_build
+        run: ninja
