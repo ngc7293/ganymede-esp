@@ -10,9 +10,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: true
-      
-      - name: install protobuf
-        run: apt-get update && apt-get install protobuf-compiler -y
+
+      - name: install dependencies
+        run: apt-get update && apt-get install autoconf libtool pkg-config protobuf-compiler libprotoc-dev -y
 
       - name: install protobuf-c
         run: |
@@ -23,10 +23,20 @@ jobs:
           make
           make install
 
+      - name: prepare workspace
+        run: |
+          mkdir _build
+          cp sdkconfig.defaults sdkconfig
+
+      - name: prepare environment
+        run: |
+          echo /opt/esp/tools/cmake/3.24.0/bin >> $GITHUB_PATH
+          echo /opt/esp/tools/xtensa-esp32s2-elf/esp-12.2.0_20230208/xtensa-esp32s2-elf/bin >> $GITHUB_PATH
+
       - name: configure
-        working-directory: ./_build
+        working-directory: _build
         run: cmake .. -G Ninja -DCMAKE_TOOLCHAIN_FILE=/opt/esp/idf/tools/cmake/toolchain-esp32s2.cmake -DTARGET=esp32s2 -DPYTHON=/opt/esp/python_env/idf5.1_py3.8_env/bin/python
 
       - name: build
-        working-directory: ./_build
+        working-directory: _build
         run: ninja
