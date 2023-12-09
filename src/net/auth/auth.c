@@ -108,7 +108,7 @@ static int auth_perform_refresh()
     auth_read_credentials_from_storage(NULL, NULL, refresh_token, &refresh_token_len);
     snprintf((char*)_payload_buffer, sizeof(_payload_buffer), REFRESH_TOKEN_REQUEST_PAYLOAD_TEMPLATE, refresh_token);
 
-    if (http2_session_connect(session, CONFIG_AUTH_AUTH0_HOSTNAME, 443) == ESP_FAIL) {
+    if (http2_session_connect(session, CONFIG_AUTH_AUTH0_HOSTNAME, 443, NULL) == ESP_FAIL) {
         ESP_LOGE(TAG, "failed connect to %s:443", CONFIG_AUTH_AUTH0_HOSTNAME);
         http2_session_release(session);
         return ESP_FAIL;
@@ -152,7 +152,7 @@ static int auth_perform_interactive_register(void)
         return ESP_FAIL;
     }
 
-    if (http2_session_connect(session, CONFIG_AUTH_AUTH0_HOSTNAME, 443) == ESP_FAIL) {
+    if (http2_session_connect(session, CONFIG_AUTH_AUTH0_HOSTNAME, 443, NULL) == ESP_FAIL) {
         ESP_LOGE(TAG, "failed connect to %s:443", CONFIG_AUTH_AUTH0_HOSTNAME);
         http2_session_release(session);
         return ESP_FAIL;
