@@ -84,9 +84,11 @@ void app_main(void)
                 if (strcmp(linebuf, "register") == 0) {
                     auth_request_register();
                 }
-
-                if (strcmp(linebuf, "memory") == 0) {
+                else if (strcmp(linebuf, "memory") == 0) {
                     report_memory();
+                }
+                else if (strcmp(linebuf, "poll") == 0) {
+                    poll_request_refresh();
                 }
             } else {
                 linebuf[cursor++] = (char) c;
