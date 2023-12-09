@@ -2,6 +2,7 @@
 #include <time.h>
 
 #include <esp_log.h>
+#include <esp_mac.h>
 #include <esp_timer.h>
 #include <esp_wifi.h>
 
@@ -72,12 +73,32 @@ static size_t _pack_protobuf(ProtobufCMessage* request, uint8_t* buffer)
     return length;
 }
 
+static esp_err_t _poll_get_mac(char* dest)
+{
+    uint8_t mac[6] = { 0 };
+
+    if (esp_read_mac(mac, ESP_MAC_WIFI_STA) != ESP_OK) {
+        ESP_LOGE(TAG, "Could not read WiFi MAC address");
+        return ESP_FAIL;
+    }
+
+    snprintf(dest, 18, "%02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    ESP_LOGD(TAG, "MAC %s", dest);
+    return ESP_OK;
+}
+
 static Ganymede__V2__Device* poll_fetch_device(http2_session_t* session, const struct http_perform_options* options)
 {
+    char mac[17] = { 0 };
+
     Ganymede__V2__GetDeviceRequest request;
     ganymede__v2__get_device_request__init(&request);
-    request.device_uid = CONFIG_GANYMEDE_DEVICE_ID;
-    request.filter_case = GANYMEDE__V2__GET_DEVICE_REQUEST__FILTER_DEVICE_UID;
+    request.filter_case = GANYMEDE__V2__GET_DEVICE_REQUEST__FILTER_DEVICE_MAC;
+    request.device_mac = mac;
+    
+    if (_poll_get_mac(mac) != ESP_OK) {
+        return NULL;
+    }
 
     uint32_t length = _pack_protobuf((ProtobufCMessage*)&request, _payload_buffer);
 
@@ -237,5 +258,10 @@ int app_poll_init()
     }
 
     xEventGroupSetBits(_poll_event_group, POLL_REFRESH_REQUEST_BIT);
-    return esp_timer_start_periodic(_poll_refresh_timer, 60e6);
+    return esp_timer_start_periodic(_poll_refresh_timer, 3600 * 10e6);
+}
+
+void poll_request_refresh()
+{
+    xEventGroupSetBits(_poll_event_group, POLL_REFRESH_REQUEST_BIT);
 }

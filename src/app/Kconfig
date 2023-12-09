@@ -13,10 +13,4 @@ menu "Poll"
         help
           Server name expected by the nginx ingress (if any). This could differ
           from GANYMEDE_HOST when deploying the server on a local network.
-
-    config GANYMEDE_DEVICE_ID
-        string "Ganymede Device ID"
-        help
-          MAC-address lookup is not yet supported, so the Device ID must be
-          hard-coded into the code.
 endmenu
