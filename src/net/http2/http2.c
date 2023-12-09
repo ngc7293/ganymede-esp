@@ -2,6 +2,7 @@
 
 #include <string.h>
 
+#include <esp_crt_bundle.h>
 #include <esp_log.h>
 #include <esp_tls.h>
 #include <esp_timer.h>
@@ -43,6 +44,7 @@ struct http2_event_connect {
     TaskHandle_t requestor;
 
     const char* hostname;
+    const char* common_name;
     uint16_t port;
 };
 
@@ -262,7 +264,7 @@ static int http2_ng_init(http2_session_t* session)
     return ESP_OK;
 }
 
-static int32_t http2_session_connect_internal(http2_session_t* session, const char* hostname, uint16_t port)
+static int32_t http2_session_connect_internal(http2_session_t* session, const char* hostname, uint16_t port, const char* common_name)
 {
     size_t hostname_length = strlen(hostname);
 
@@ -271,8 +273,12 @@ static int32_t http2_session_connect_internal(http2_session_t* session, const ch
     esp_tls_cfg_t config = {
         .alpn_protos = alpn_protos,
         .non_block = true,
-        .timeout_ms = 5 * 1000
+        .timeout_ms = INT32_MAX,
+        .common_name = common_name,
+        .crt_bundle_attach = esp_crt_bundle_attach,
     };
+
+    ESP_LOGD(TAG, "Trying connection to %s (common_name: %s)", hostname, common_name ? common_name : hostname);
 
     if (esp_tls_conn_new_sync(hostname, hostname_length, port, &config, session->tls) == ESP_FAIL) {
         return ESP_FAIL;
@@ -364,7 +370,7 @@ static int32_t http2_session_perform_internal(http2_session_t* session, const ch
 
 static void http2_handle_connect_event(struct http2_event_connect event)
 {
-    int32_t rc = http2_session_connect_internal(event.session, event.hostname, event.port);
+    int32_t rc = http2_session_connect_internal(event.session, event.hostname, event.port, event.common_name);
     xTaskNotify(event.requestor, (uint32_t) rc, eSetValueWithOverwrite);
 }
 
@@ -439,7 +445,7 @@ http2_session_t* http2_session_acquire(const TickType_t ticks_to_wait)
     return session;
 }
 
-int http2_session_connect(http2_session_t* session, const char* hostname, uint16_t port)
+int http2_session_connect(http2_session_t* session, const char* hostname, uint16_t port, const char* common_name)
 {
     int32_t rc = ESP_FAIL;
 
@@ -453,6 +459,7 @@ int http2_session_connect(http2_session_t* session, const char* hostname, uint16
         .requestor = xTaskGetCurrentTaskHandle(),
 
         .hostname = hostname,
+        .common_name = common_name,
         .port = port
     };
 

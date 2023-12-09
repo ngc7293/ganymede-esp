@@ -164,7 +164,7 @@ static void poll_refresh()
         goto cleanup;
     }
     
-    if (http2_session_connect(session, CONFIG_GANYMEDE_HOST, 443) != ESP_OK) {
+    if (http2_session_connect(session, CONFIG_GANYMEDE_HOST, 443, NULL) != ESP_OK) {
         ESP_LOGE(TAG, "failed to connect to %s:443", CONFIG_GANYMEDE_HOST);
         goto cleanup;
     }
