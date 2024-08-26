@@ -5,7 +5,6 @@
 
 int app_lights_init(void);
 
-int app_lights_notify_device(Ganymede__V2__Device* device);
-int app_lights_notify_config(Ganymede__V2__Config* config);
+int app_lights_notify_poll(Ganymede__V2__PollResponse* config);
 
 #endif

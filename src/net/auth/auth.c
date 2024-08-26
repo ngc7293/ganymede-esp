@@ -17,7 +17,7 @@
 #include <api/error.h>
 #include <net/http2/http2.h>
 
-#define AUTH_TASK_STACK_DEPTH (1024 * 2)
+#define AUTH_TASK_STACK_DEPTH (1024 * 4)
 
 #define AUTH_CONNECTED_BIT BIT0
 #define AUTH_REFRESH_REQUEST_BIT BIT1

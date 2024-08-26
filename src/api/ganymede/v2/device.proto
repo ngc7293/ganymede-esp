@@ -12,6 +12,8 @@ service DeviceService {
     rpc ListDevice(ListDeviceRequest) returns (ListDeviceResponse);
     rpc DeleteDevice(DeleteDeviceRequest) returns (google.protobuf.Empty);
 
+    rpc Poll(PollRequest) returns (PollResponse);
+
     rpc CreateConfig(CreateConfigRequest) returns (Config);
     rpc UpdateConfig(UpdateConfigRequest) returns (Config);
     rpc GetConfig(GetConfigRequest) returns (Config);
@@ -29,10 +31,7 @@ message UpdateDeviceRequest {
 }
 
 message GetDeviceRequest {
-    oneof filter {
-        string device_uid = 1;
-        string device_mac = 2;
-    }
+    string device_uid = 1;
 }
 
 message ListDeviceRequest {
@@ -49,6 +48,23 @@ message ListDeviceResponse {
 message DeleteDeviceRequest {
     string device_uid = 1;
     string reason = 2;
+}
+
+message PollRequest {
+    string device_mac = 1;
+}
+
+message PollResponse {
+    string device_uid = 1;
+    string device_display_name = 2;
+
+    string config_uid = 11;
+    string config_display_name = 12;
+
+    // Current device's offset from UTC (including DST if applicable)
+    int64 timezone_offset_minutes = 20;
+
+    LightConfig light_config = 101;
 }
 
 message CreateConfigRequest {
@@ -97,9 +113,6 @@ message Device {
     // Device timezone in IANA <zone>/<city> format
     string timezone = 12;
 
-    // Output only. Current device's offset from UTC (including DST if applicable)
-    int64 timezone_offset_minutes = 13;
-
     string config_uid = 20;
 }
 
@@ -119,7 +132,7 @@ message Luminaire {
     }
 
     uint32 port = 1;
-    bool use_pwm = 2;
+    bool active_high = 2;
 
     repeated DailySchedule photo_period = 3;
 }

@@ -13,6 +13,8 @@
 
 #define HTTP2_TASK_STACK_DEPTH (1024 * 20)
 
+static char _http2_rx_buffer[16394] = { 0 };
+
 static const char* TAG = "http2";
 
 struct http2_session {
@@ -75,6 +77,41 @@ union http2_event {
 
 static SemaphoreHandle_t _http2_mutex;
 static QueueHandle_t _http2_event_queue;
+
+void* http2_malloc(size_t size, void*)
+{
+    return malloc(size);
+}
+
+void* http2_calloc(size_t nmemb, size_t size, void*)
+{
+    return calloc(nmemb, size);
+}
+
+void* http2_realloc(void* ptr, size_t size, void*)
+{
+    // Hack to reduce heap fragmentation when creating many HTTP2 sessions.
+    if (size == 16394) {
+        free(ptr);
+        return (void*) _http2_rx_buffer;
+    } else {
+        return realloc(ptr, size);
+    }
+}
+
+void http2_free(void* ptr, void*)
+{
+    if (ptr != _http2_rx_buffer) {
+        return free(ptr);
+    }
+}
+
+static nghttp2_mem mem = {
+    .malloc = http2_malloc,
+    .calloc = http2_calloc,
+    .realloc = http2_realloc,
+    .free = http2_free,
+};
 
 static ssize_t http2_tls_send(nghttp2_session* ng, const uint8_t* data, size_t length, int flags, void* user_data)
 {
@@ -240,12 +277,24 @@ static int http2_tls_init(http2_session_t* session)
 
 static int http2_ng_init(http2_session_t* session)
 {
+    int rc = ESP_OK;
+    nghttp2_option *options;
     nghttp2_session_callbacks* callbacks;
 
-    int rc = 0;
+    if ((rc = nghttp2_option_new(&options)) != 0) {
+        ESP_LOGE(TAG, "nghttp2_option_new rc=%d", rc);
+        rc = ESP_FAIL;
+        goto http2_ng_init_exit;
+    }
+    
+    nghttp2_option_set_no_closed_streams(options, true);
+    nghttp2_option_set_max_deflate_dynamic_table_size(options, 2048);
+
+
     if ((rc = nghttp2_session_callbacks_new(&callbacks)) != 0) {
         ESP_LOGE(TAG, "nghttp2_session_callbacks_new rc=%d", rc);
-        return ESP_FAIL;
+        rc = ESP_FAIL;
+        goto http2_ng_init_cleanup_options;
     }
 
     nghttp2_session_callbacks_set_send_callback(callbacks, http2_tls_send);
@@ -255,13 +304,20 @@ static int http2_ng_init(http2_session_t* session)
     nghttp2_session_callbacks_set_on_data_chunk_recv_callback(callbacks, http2_on_data);
     nghttp2_session_callbacks_set_on_stream_close_callback(callbacks, http2_on_stream_close);
 
-    if ((rc = nghttp2_session_client_new(&session->ng, callbacks, session)) != 0) {
+    if ((rc = nghttp2_session_client_new3(&session->ng, callbacks, session, options, &mem)) != 0) {
         ESP_LOGE(TAG, "nghttp2_session_client_new rc=%d", rc);
-        return ESP_FAIL;
+        rc = ESP_FAIL;
+        goto http2_ng_init_cleanup_callbacks;
     }
 
+http2_ng_init_cleanup_options:
+    nghttp2_option_del(options);
+
+http2_ng_init_cleanup_callbacks:
     nghttp2_session_callbacks_del(callbacks);
-    return ESP_OK;
+
+http2_ng_init_exit:
+    return rc;
 }
 
 static int32_t http2_session_connect_internal(http2_session_t* session, const char* hostname, uint16_t port, const char* common_name)
@@ -280,7 +336,15 @@ static int32_t http2_session_connect_internal(http2_session_t* session, const ch
 
     ESP_LOGD(TAG, "Trying connection to %s (common_name: %s)", hostname, common_name ? common_name : hostname);
 
-    if (esp_tls_conn_new_sync(hostname, hostname_length, port, &config, session->tls) == ESP_FAIL) {
+    int state = 0;
+    while (state == 0) {
+        // The _sync version of this function uses gettimeofday to check the connection timeout. This breaks
+        // when you set the correct time as int32 is too small for the current unix time (in ms).
+        state = esp_tls_conn_new_async(hostname, hostname_length, port, &config, session->tls);
+
+    }
+
+    if (state == -1) {
         return ESP_FAIL;
     }
 
@@ -361,8 +425,6 @@ static int32_t http2_session_perform_internal(http2_session_t* session, const ch
             ESP_LOGE(TAG, "recv failed: %s", nghttp2_strerror(rc));
             break;
         }
-
-        ESP_LOGD(TAG, "Processing: current=%lld end=%lld", esp_timer_get_time(), end);
     } while (session->complete == false && esp_timer_get_time() < end);
 
     return session->status;
@@ -430,13 +492,13 @@ http2_session_t* http2_session_acquire(const TickType_t ticks_to_wait)
     session->tls = NULL;
     session->ng = NULL;
 
-    if (http2_tls_init(session) == ESP_FAIL) {
+    if (http2_tls_init(session) != ESP_OK) {
         ESP_LOGE(TAG, "tls initialization failed");
         http2_session_release(session);
         return NULL;
     }
 
-    if (http2_ng_init(session) == ESP_FAIL) {
+    if (http2_ng_init(session) != ESP_OK) {
         ESP_LOGE(TAG, "http2 library initialization failed");
         http2_session_release(session);
         return NULL;

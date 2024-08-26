@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.18)
 project(ganymede VERSION 0.0.1)
 
+set(CMAKE_SYSTEM_NAME Generic)
+
 include($ENV{IDF_PATH}/tools/cmake/idf.cmake)
 
 set(GANYMEDE_COMPONENTS "${GANYMEDE_COMPONENTS}" CACHE INTERNAL "GANYMEDE_COMPONENTS")

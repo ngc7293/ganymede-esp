@@ -44,8 +44,21 @@ static void lights_recompute(struct tm* timeinfo, Ganymede__V2__LightConfig* lig
             }
         }
 
-        gpio_set_level(luminaire->port, !active);
-        ESP_LOGD(TAG, "%02d:%02d:%02d port=%lu active=%s", timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec, luminaire->port, active ? "true" : "false");
+        if (luminaire->active_high == 0) {
+            active = !active;
+        }
+
+        gpio_set_level(luminaire->port, active);
+        ESP_LOGD(
+            TAG,
+            "%02d:%02d:%02d port=%lu signal=%s (%s)",
+            timeinfo->tm_hour,
+            timeinfo->tm_min,
+            timeinfo->tm_sec,
+            luminaire->port,
+            active ? "high" : "low",
+            luminaire->active_high ? "active_high" : "active_low"
+        );
     }
 }
 
@@ -90,7 +103,7 @@ static int lights_reconfigure_gpio(Ganymede__V2__LightConfig* old_config, Ganyme
                 .pull_down_en = GPIO_PULLDOWN_DISABLE
             };
 
-            ERROR_CHECK(gpio_set_level(port, true));
+            ERROR_CHECK(gpio_set_level(port, false));
             ERROR_CHECK(gpio_config(&pin_config));
 
             ESP_LOGD(TAG, "enabled gpio port %lu", port);
@@ -146,10 +159,10 @@ int app_lights_notify_device(Ganymede__V2__Device* device)
     return ESP_OK;
 }
 
-int app_lights_notify_config(Ganymede__V2__Config* config)
+int app_lights_notify_poll(Ganymede__V2__PollResponse* response)
 {
     // FIXME: This is a hack to quickly deep-clone, but it is not performance efficient
-    size_t size = protobuf_c_message_pack((ProtobufCMessage*) config->light_config, buffer);
+    size_t size = protobuf_c_message_pack((ProtobufCMessage*) response->light_config, buffer);
     incoming_light_config = (Ganymede__V2__LightConfig*) protobuf_c_message_unpack(&ganymede__v2__light_config__descriptor, NULL, size, buffer);
     return ESP_OK;
 }
