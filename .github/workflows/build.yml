@@ -7,14 +7,15 @@ jobs:
     runs-on: ubuntu-22.04
     container: espressif/idf:v5.3
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
         with:
           submodules: true
 
-      - name: install dependencies
+      - name: Install dependencies
         run: apt-get update && apt-get install autoconf libtool pkg-config protobuf-compiler libprotoc-dev -y
 
-      - name: install protobuf-c
+      - name: Install protobuf-c
         run: |
           git clone https://github.com/protobuf-c/protobuf-c /libs/protobuf-c
           cd /libs/protobuf-c
@@ -23,20 +24,20 @@ jobs:
           make
           make install
 
-      - name: prepare workspace
+      - name: Prepare workspace
         run: |
           mkdir _build
           cp sdkconfig.defaults sdkconfig
 
-      - name: prepare environment
+      - name: Prepare environment
         run: |
           echo /opt/esp/tools/cmake/3.24.0/bin >> $GITHUB_PATH
-          echo /opt/espressif/tools/xtensa-esp-elf/esp-13.2.0_20240530/xtensa-esp-elf/bin >> $GITHUB_PATH
+          echo /opt/esp/tools/xtensa-esp-elf/esp-13.2.0_20240530/xtensa-esp-elf/bin >> $GITHUB_PATH
 
-      - name: configure
+      - name: Configure
         working-directory: _build
         run: cmake .. -G Ninja -DCMAKE_TOOLCHAIN_FILE=/opt/esp/idf/tools/cmake/toolchain-esp32s2.cmake -DTARGET=esp32s2 -DPYTHON=/opt/esp/python_env/idf5.3_py3.10_env/bin/python
 
-      - name: build
+      - name: Build
         working-directory: _build
         run: ninja

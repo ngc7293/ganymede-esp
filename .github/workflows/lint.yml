@@ -3,16 +3,16 @@ name: Lint
 on: push
 
 jobs:
-  build:
+  lint:
     runs-on: ubuntu-22.04
     container: espressif/idf:v5.3
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: install dependencies
-        run: apt-get update && apt-get install clang-format
+      - name: Install dependencies
+        run: apt-get update && apt-get install clang-format -y
 
-      - name: lint
-        working-directory: _build
+      - name: Lint
         run: find src/ -name "*.h" -o -name "*.c" | xargs clang-format --dry-run -Werror
