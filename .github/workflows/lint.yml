@@ -5,12 +5,13 @@ on: push
 jobs:
   build:
     runs-on: ubuntu-22.04
+    container: espressif/idf:v5.3
 
     steps:
       - uses: actions/checkout@v4
 
       - name: install dependencies
-        run: apt-get update && apt-get clang-format
+        run: apt-get update && apt-get install clang-format
 
       - name: lint
         working-directory: _build
