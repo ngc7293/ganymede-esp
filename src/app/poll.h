@@ -1,7 +1,9 @@
 #ifndef APP__POLL_H_
 #define APP__POLL_H_
 
-int app_poll_init();
-void poll_request_refresh();
+#include <esp_err.h>
 
-#endif
+esp_err_t app_poll_init();
+esp_err_t poll_request_refresh();
+
+#endif // APP__POLL_H_

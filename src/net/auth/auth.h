@@ -3,8 +3,10 @@
 
 #include <stdlib.h>
 
-int auth_init(void);
-int auth_request_register(void);
-int auth_get_token(char* dest, size_t* len);
+#include <esp_err.h>
 
-#endif
+esp_err_t auth_init(void);
+esp_err_t auth_request_register(void);
+esp_err_t auth_get_token(char* dest, size_t* len);
+
+#endif // NET__AUTH__AUTH_H_

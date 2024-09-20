@@ -2,3 +2,6 @@ BasedOnStyle: Webkit
 ColumnLimit: 0
 CompactNamespaces: true
 NamespaceIndentation: None
+SpaceAfterCStyleCast: true
+AlignAfterOpenBracket: BlockIndent
+AlignConsecutiveMacros: Consecutive

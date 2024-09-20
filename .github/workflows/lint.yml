@@ -1,0 +1,17 @@
+name: Lint
+
+on: push
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install dependencies
+        run: apt-get update && apt-get clang-format
+
+      - name: lint
+        working-directory: _build
+        run: find src/ -name "*.h" -o -name "*.c" | xargs clang-format --dry-run -Werror

@@ -46,6 +46,7 @@ endfunction()
 
 add_library(api.google
     STATIC
+        google/protobuf/duration.proto
         google/protobuf/empty.proto
         google/protobuf/timestamp.proto
 )

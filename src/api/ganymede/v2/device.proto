@@ -1,6 +1,7 @@
 syntax = "proto3";
 
 import "google/protobuf/empty.proto";
+import "google/protobuf/duration.proto";
 
 package ganymede.v2;
 
@@ -63,6 +64,7 @@ message PollResponse {
 
     // Current device's offset from UTC (including DST if applicable)
     int64 timezone_offset_minutes = 20;
+    google.protobuf.Duration poll_period = 21;
 
     LightConfig light_config = 101;
 }

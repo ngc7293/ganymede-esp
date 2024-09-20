@@ -4,16 +4,14 @@
 
 #include <esp_crt_bundle.h>
 #include <esp_log.h>
-#include <esp_tls.h>
 #include <esp_timer.h>
+#include <esp_tls.h>
 
 #include <freertos/semphr.h>
 
 #include <nghttp2/nghttp2.h>
 
 #define HTTP2_TASK_STACK_DEPTH (1024 * 20)
-
-static char _http2_rx_buffer[16394] = { 0 };
 
 static const char* TAG = "http2";
 
@@ -78,18 +76,24 @@ union http2_event {
 static SemaphoreHandle_t _http2_mutex;
 static QueueHandle_t _http2_event_queue;
 
-void* http2_malloc(size_t size, void*)
+static char _http2_rx_buffer[16394] = { 0 };
+
+static void* _http2_nghttp2_malloc(size_t size, void* user_data)
 {
+    (void) user_data;
     return malloc(size);
 }
 
-void* http2_calloc(size_t nmemb, size_t size, void*)
+static void* _http2_nghttp2_calloc(size_t nmemb, size_t size, void* user_data)
 {
+    (void) user_data;
     return calloc(nmemb, size);
 }
 
-void* http2_realloc(void* ptr, size_t size, void*)
+static void* _http2_nghttp2_realloc(void* ptr, size_t size, void* user_data)
 {
+    (void) user_data;
+
     // Hack to reduce heap fragmentation when creating many HTTP2 sessions.
     if (size == 16394) {
         free(ptr);
@@ -99,28 +103,30 @@ void* http2_realloc(void* ptr, size_t size, void*)
     }
 }
 
-void http2_free(void* ptr, void*)
+static void _http2_nghttp2_free(void* ptr, void* user_data)
 {
+    (void) user_data;
+
     if (ptr != _http2_rx_buffer) {
         return free(ptr);
     }
 }
 
-static nghttp2_mem mem = {
-    .malloc = http2_malloc,
-    .calloc = http2_calloc,
-    .realloc = http2_realloc,
-    .free = http2_free,
+static nghttp2_mem _nghttp2_mem = {
+    .malloc = _http2_nghttp2_malloc,
+    .calloc = _http2_nghttp2_calloc,
+    .realloc = _http2_nghttp2_realloc,
+    .free = _http2_nghttp2_free,
 };
 
-static ssize_t http2_tls_send(nghttp2_session* ng, const uint8_t* data, size_t length, int flags, void* user_data)
+static ssize_t _http2_tls_send(nghttp2_session* ng, const uint8_t* data, size_t length, int flags, void* user_data)
 {
     (void) ng;
     (void) flags;
 
     http2_session_t* session = (http2_session_t*) user_data;
 
-    int rc = 0;
+    ssize_t rc = 0;
     int cursor = 0;
 
     while (cursor != length) {
@@ -145,14 +151,14 @@ static ssize_t http2_tls_send(nghttp2_session* ng, const uint8_t* data, size_t l
     return rc;
 }
 
-static ssize_t http2_tls_recv(nghttp2_session* ng, uint8_t* buf, size_t length, int flags, void* user_data)
+static ssize_t _http2_tls_recv(nghttp2_session* ng, uint8_t* buf, size_t length, int flags, void* user_data)
 {
     (void) ng;
     (void) flags;
 
     http2_session_t* session = (http2_session_t*) user_data;
 
-    int rc = esp_tls_conn_read(session->tls, buf, length);
+    ssize_t rc = esp_tls_conn_read(session->tls, buf, length);
 
     if (rc < 0) {
         if (rc == ESP_TLS_ERR_SSL_WANT_READ || rc == ESP_TLS_ERR_SSL_WANT_WRITE) {
@@ -168,23 +174,23 @@ static ssize_t http2_tls_recv(nghttp2_session* ng, uint8_t* buf, size_t length, 
     return rc;
 }
 
-static nghttp2_nv http2_make_header_with_flag(const char* name, const char* value, const int flags)
+static nghttp2_nv _http2_make_header_with_flag(const char* name, const char* value, const int flags)
 {
     nghttp2_nv header = { (uint8_t*) name, (uint8_t*) value, strlen(name), strlen(value), flags };
     return header;
 }
 
-static nghttp2_nv http2_make_header(const char* name, const char* value)
+static nghttp2_nv _http2_make_header(const char* name, const char* value)
 {
-    return http2_make_header_with_flag(name, value, NGHTTP2_NV_FLAG_NONE);
+    return _http2_make_header_with_flag(name, value, NGHTTP2_NV_FLAG_NONE);
 }
 
-static nghttp2_nv http2_make_header_static(const char* name, const char* value)
+static nghttp2_nv _http2_make_header_static(const char* name, const char* value)
 {
-    return http2_make_header_with_flag(name, value, NGHTTP2_NV_FLAG_NO_COPY_NAME | NGHTTP2_NV_FLAG_NO_COPY_VALUE);
+    return _http2_make_header_with_flag(name, value, NGHTTP2_NV_FLAG_NO_COPY_NAME | NGHTTP2_NV_FLAG_NO_COPY_VALUE);
 }
 
-ssize_t http2_data_provider(nghttp2_session *ng, int32_t stream_id, uint8_t *buf, size_t length, uint32_t *data_flags, nghttp2_data_source *source, void *user_data)
+ssize_t _http2_data_provider(nghttp2_session* ng, int32_t stream_id, uint8_t* buf, size_t length, uint32_t* data_flags, nghttp2_data_source* source, void* user_data)
 {
     (void) stream_id;
     (void) ng;
@@ -207,7 +213,7 @@ ssize_t http2_data_provider(nghttp2_session *ng, int32_t stream_id, uint8_t *buf
     return to_write;
 }
 
-static int http2_on_data(nghttp2_session *ng, uint8_t flags, int32_t stream_id, const uint8_t *data, size_t len, void *user_data)
+static esp_err_t _http2_on_data(nghttp2_session* ng, uint8_t flags, int32_t stream_id, const uint8_t* data, size_t len, void* user_data)
 {
     (void) ng;
     (void) flags;
@@ -225,10 +231,10 @@ static int http2_on_data(nghttp2_session *ng, uint8_t flags, int32_t stream_id, 
     session->dest[session->dest_cursor + 1] = 0;
     ESP_LOGD(TAG, "received: %.*s", len, (char*) data);
 
-    return 0;
+    return ESP_OK;
 }
 
-static int http2_on_header(nghttp2_session *ng, const nghttp2_frame *frame, const uint8_t *name, size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *user_data)
+static esp_err_t _http2_on_header(nghttp2_session* ng, const nghttp2_frame* frame, const uint8_t* name, size_t namelen, const uint8_t* value, size_t valuelen, uint8_t flags, void* user_data)
 {
     (void) ng;
     (void) frame;
@@ -248,10 +254,10 @@ static int http2_on_header(nghttp2_session *ng, const nghttp2_frame *frame, cons
     }
 
     ESP_LOGD(TAG, "%s: %s", name, value);
-    return 0;
+    return ESP_OK;
 }
 
-static int http2_on_stream_close(nghttp2_session *ng, int32_t stream_id, uint32_t error_code, void *user_data)
+static esp_err_t _http2_on_stream_close(nghttp2_session* ng, int32_t stream_id, uint32_t error_code, void* user_data)
 {
     (void) ng;
     (void) stream_id;
@@ -261,10 +267,10 @@ static int http2_on_stream_close(nghttp2_session *ng, int32_t stream_id, uint32_
     session->complete = true;
 
     ESP_LOGD(TAG, "stream closed");
-    return 0;
+    return ESP_OK;
 }
 
-static int http2_tls_init(http2_session_t* session)
+static esp_err_t _http2_tls_init(http2_session_t* session)
 {
     session->tls = esp_tls_init();
 
@@ -275,10 +281,10 @@ static int http2_tls_init(http2_session_t* session)
     return ESP_OK;
 }
 
-static int http2_ng_init(http2_session_t* session)
+static esp_err_t _http2_ng_init(http2_session_t* session)
 {
-    int rc = ESP_OK;
-    nghttp2_option *options;
+    esp_err_t rc = ESP_OK;
+    nghttp2_option* options;
     nghttp2_session_callbacks* callbacks;
 
     if ((rc = nghttp2_option_new(&options)) != 0) {
@@ -286,10 +292,9 @@ static int http2_ng_init(http2_session_t* session)
         rc = ESP_FAIL;
         goto http2_ng_init_exit;
     }
-    
+
     nghttp2_option_set_no_closed_streams(options, true);
     nghttp2_option_set_max_deflate_dynamic_table_size(options, 2048);
-
 
     if ((rc = nghttp2_session_callbacks_new(&callbacks)) != 0) {
         ESP_LOGE(TAG, "nghttp2_session_callbacks_new rc=%d", rc);
@@ -297,14 +302,14 @@ static int http2_ng_init(http2_session_t* session)
         goto http2_ng_init_cleanup_options;
     }
 
-    nghttp2_session_callbacks_set_send_callback(callbacks, http2_tls_send);
-    nghttp2_session_callbacks_set_recv_callback(callbacks, http2_tls_recv);
+    nghttp2_session_callbacks_set_send_callback(callbacks, _http2_tls_send);
+    nghttp2_session_callbacks_set_recv_callback(callbacks, _http2_tls_recv);
 
-    nghttp2_session_callbacks_set_on_header_callback(callbacks, http2_on_header);
-    nghttp2_session_callbacks_set_on_data_chunk_recv_callback(callbacks, http2_on_data);
-    nghttp2_session_callbacks_set_on_stream_close_callback(callbacks, http2_on_stream_close);
+    nghttp2_session_callbacks_set_on_header_callback(callbacks, _http2_on_header);
+    nghttp2_session_callbacks_set_on_data_chunk_recv_callback(callbacks, _http2_on_data);
+    nghttp2_session_callbacks_set_on_stream_close_callback(callbacks, _http2_on_stream_close);
 
-    if ((rc = nghttp2_session_client_new3(&session->ng, callbacks, session, options, &mem)) != 0) {
+    if ((rc = nghttp2_session_client_new3(&session->ng, callbacks, session, options, &_nghttp2_mem)) != 0) {
         ESP_LOGE(TAG, "nghttp2_session_client_new rc=%d", rc);
         rc = ESP_FAIL;
         goto http2_ng_init_cleanup_callbacks;
@@ -320,7 +325,7 @@ http2_ng_init_exit:
     return rc;
 }
 
-static int32_t http2_session_connect_internal(http2_session_t* session, const char* hostname, uint16_t port, const char* common_name)
+static esp_err_t _http2_session_connect_internal(http2_session_t* session, const char* hostname, uint16_t port, const char* common_name)
 {
     size_t hostname_length = strlen(hostname);
 
@@ -341,7 +346,6 @@ static int32_t http2_session_connect_internal(http2_session_t* session, const ch
         // The _sync version of this function uses gettimeofday to check the connection timeout. This breaks
         // when you set the correct time as int32 is too small for the current unix time (in ms).
         state = esp_tls_conn_new_async(hostname, hostname_length, port, &config, session->tls);
-
     }
 
     if (state == -1) {
@@ -352,7 +356,7 @@ static int32_t http2_session_connect_internal(http2_session_t* session, const ch
     return nghttp2_submit_settings(session->ng, NGHTTP2_FLAG_NONE, NULL, 0);
 }
 
-static int32_t http2_session_check_tls_conn(http2_session_t* session)
+static esp_err_t _http2_session_check_tls_conn(http2_session_t* session)
 {
     esp_tls_conn_state_t state;
 
@@ -363,13 +367,13 @@ static int32_t http2_session_check_tls_conn(http2_session_t* session)
     return ESP_OK;
 }
 
-static int32_t http2_session_perform_internal(http2_session_t* session, const char* method, const char* authority, const char* path, const char* payload, size_t payload_len, char* dest, size_t dest_len, const struct http_perform_options options)
+static esp_err_t _http2_session_perform_internal(http2_session_t* session, const char* method, const char* authority, const char* path, const char* payload, size_t payload_len, char* dest, size_t dest_len, const struct http_perform_options options)
 {
     if (session == NULL) {
-        return -1;
+        return ESP_FAIL;
     }
 
-    if (http2_session_check_tls_conn(session) == ESP_FAIL) {
+    if (_http2_session_check_tls_conn(session) == ESP_FAIL) {
         ESP_LOGE(TAG, "TLS connection not ok");
         return ESP_FAIL;
     }
@@ -391,19 +395,19 @@ static int32_t http2_session_perform_internal(http2_session_t* session, const ch
     snprintf(content_length, 10, "%u", session->payload_length);
 
     nghttp2_nv headers[] = {
-        http2_make_header(":method", method),
-        http2_make_header_static(":scheme", "https"),
-        http2_make_header(":path", path),
-        http2_make_header_static(":authority", authority),
-        http2_make_header("content-length", content_length),
-        http2_make_header("content-type", options.content_type),
-        http2_make_header("authorization",  options.authorization),
-        http2_make_header_static("user-agent", "esp32s2; nghttp2; ganymede"),
-        http2_make_header_static("te", "trailers")
+        _http2_make_header(":method", method),
+        _http2_make_header_static(":scheme", "https"),
+        _http2_make_header(":path", path),
+        _http2_make_header_static(":authority", authority),
+        _http2_make_header("content-length", content_length),
+        _http2_make_header("content-type", options.content_type),
+        _http2_make_header("authorization", options.authorization),
+        _http2_make_header_static("user-agent", "esp32s2; nghttp2; ganymede"),
+        _http2_make_header_static("te", "trailers")
     };
 
     nghttp2_data_provider provider = {
-        .read_callback = http2_data_provider
+        .read_callback = _http2_data_provider
     };
 
     int rc = nghttp2_submit_request(session->ng, NULL, headers, sizeof(headers) / sizeof(nghttp2_nv), &provider, &session);
@@ -430,19 +434,19 @@ static int32_t http2_session_perform_internal(http2_session_t* session, const ch
     return session->status;
 }
 
-static void http2_handle_connect_event(struct http2_event_connect event)
+static void _http2_handle_connect_event(struct http2_event_connect event)
 {
-    int32_t rc = http2_session_connect_internal(event.session, event.hostname, event.port, event.common_name);
+    int32_t rc = _http2_session_connect_internal(event.session, event.hostname, event.port, event.common_name);
     xTaskNotify(event.requestor, (uint32_t) rc, eSetValueWithOverwrite);
 }
 
-static void http2_handle_perform_event(struct http2_event_perform event)
+static void _http2_handle_perform_event(struct http2_event_perform event)
 {
-    int32_t rc = http2_session_perform_internal(event.session, event.method, event.authority, event.path, event.payload, event.payload_len, event.dest, event.dest_len, event.options);
+    int32_t rc = _http2_session_perform_internal(event.session, event.method, event.authority, event.path, event.payload, event.payload_len, event.dest, event.dest_len, event.options);
     xTaskNotify(event.requestor, (uint32_t) rc, eSetValueWithOverwrite);
 }
 
-static void http2_task(void* args)
+static void _http2_task(void* args)
 {
     (void) args;
 
@@ -452,17 +456,17 @@ static void http2_task(void* args)
         if (xQueueReceive(_http2_event_queue, &event, portMAX_DELAY) == pdTRUE) {
             switch (event.type) {
             case HTTP2_EVENT_CONNECT:
-                http2_handle_connect_event(event.connect);
+                _http2_handle_connect_event(event.connect);
                 break;
             case HTTP2_EVENT_PERFORM:
-                http2_handle_perform_event(event.perform);
+                _http2_handle_perform_event(event.perform);
                 break;
             }
         }
     }
 }
 
-int http2_init()
+esp_err_t http2_init(void)
 {
     if ((_http2_mutex = xSemaphoreCreateMutex()) == NULL) {
         ESP_LOGE(TAG, "Mutex initialization failed");
@@ -474,7 +478,7 @@ int http2_init()
         return ESP_FAIL;
     }
 
-    if (xTaskCreate(http2_task, "http2_task", HTTP2_TASK_STACK_DEPTH, NULL, 4, NULL) != pdPASS) {
+    if (xTaskCreate(_http2_task, "http2_task", HTTP2_TASK_STACK_DEPTH, NULL, 4, NULL) != pdPASS) {
         ESP_LOGE(TAG, "Task creation failed");
         return ESP_FAIL;
     }
@@ -492,13 +496,13 @@ http2_session_t* http2_session_acquire(const TickType_t ticks_to_wait)
     session->tls = NULL;
     session->ng = NULL;
 
-    if (http2_tls_init(session) != ESP_OK) {
+    if (_http2_tls_init(session) != ESP_OK) {
         ESP_LOGE(TAG, "tls initialization failed");
         http2_session_release(session);
         return NULL;
     }
 
-    if (http2_ng_init(session) != ESP_OK) {
+    if (_http2_ng_init(session) != ESP_OK) {
         ESP_LOGE(TAG, "http2 library initialization failed");
         http2_session_release(session);
         return NULL;
@@ -507,9 +511,9 @@ http2_session_t* http2_session_acquire(const TickType_t ticks_to_wait)
     return session;
 }
 
-int http2_session_connect(http2_session_t* session, const char* hostname, uint16_t port, const char* common_name)
+esp_err_t http2_session_connect(http2_session_t* session, const char* hostname, uint16_t port, const char* common_name)
 {
-    int32_t rc = ESP_FAIL;
+    esp_err_t rc = ESP_FAIL;
 
     if (session == NULL || hostname == NULL) {
         return rc;
@@ -532,9 +536,9 @@ int http2_session_connect(http2_session_t* session, const char* hostname, uint16
     return rc;
 }
 
-int http2_perform(http2_session_t* session, const char* method, const char* authority, const char* path, const char* payload, size_t payload_len, char* dest, size_t dest_len, const struct http_perform_options options)
+esp_err_t http2_perform(http2_session_t* session, const char* method, const char* authority, const char* path, const char* payload, size_t payload_len, char* dest, size_t dest_len, const struct http_perform_options options)
 {
-    int32_t rc = ESP_FAIL;
+    esp_err_t rc = ESP_FAIL;
 
     if (session == NULL || method == NULL || authority == NULL || path == NULL || payload == NULL || dest == NULL) {
         return rc;
@@ -562,7 +566,7 @@ int http2_perform(http2_session_t* session, const char* method, const char* auth
     return rc;
 }
 
-int http2_session_release(http2_session_t* session)
+esp_err_t http2_session_release(http2_session_t* session)
 {
     if (session == NULL) {
         return ESP_OK;

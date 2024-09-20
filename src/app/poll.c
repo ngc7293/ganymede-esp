@@ -2,26 +2,30 @@
 #include <string.h>
 #include <time.h>
 
+#include <esp_err.h>
 #include <esp_log.h>
 #include <esp_mac.h>
 #include <esp_timer.h>
 #include <esp_wifi.h>
 
+#include <nvs_flash.h>
+
 #include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
 #include <freertos/event_groups.h>
+#include <freertos/task.h>
 
 #include <api/error.h>
+#include <app/identity.h>
 #include <app/lights.h>
+#include <ganymede/v2/device.pb-c.h>
 #include <net/auth/auth.h>
 #include <net/http2/http2.h>
-#include <ganymede/v2/device.pb-c.h>
 
 #include "poll.h"
 
 #define POLLER_TASK_STACK_DEPTH (1024 * 4)
 
-#define POLL_CONNECTED_BIT BIT0
+#define POLL_CONNECTED_BIT       BIT0
 #define POLL_REFRESH_REQUEST_BIT BIT1
 
 static const char* TAG = "poll";
@@ -33,7 +37,7 @@ static char _token[1024] = { 0 };
 static uint8_t _payload_buffer[2048] = { 0 };
 static uint8_t _response_buffer[2048] = { 0 };
 
-static void poll_event_handler(void* arg, esp_event_base_t source, int32_t id, void* data)
+static void _poll_event_handler(void* arg, esp_event_base_t source, int32_t id, void* data)
 {
     if (source == IP_EVENT) {
         if (id == IP_EVENT_STA_GOT_IP) {
@@ -48,16 +52,16 @@ static void poll_event_handler(void* arg, esp_event_base_t source, int32_t id, v
     }
 }
 
-static void poll_timer_callback(void* args)
+static void _poll_timer_callback(void* args)
 {
     (void) args;
     xEventGroupSetBits(_poll_event_group, POLL_REFRESH_REQUEST_BIT);
 }
 
-static void _copy_32bit_bigendian(uint32_t *pdest, const uint32_t *psource)
+static void _copy_32bit_bigendian(uint32_t* pdest, const uint32_t* psource)
 {
-    const unsigned char *source = (const unsigned char *) psource;
-    unsigned char *dest = (unsigned char *) pdest;
+    const unsigned char* source = (const unsigned char*) psource;
+    unsigned char* dest = (unsigned char*) pdest;
     dest[0] = source[3];
     dest[1] = source[2];
     dest[2] = source[1];
@@ -69,39 +73,25 @@ static size_t _pack_protobuf(ProtobufCMessage* request, uint8_t* buffer)
     uint32_t length = protobuf_c_message_get_packed_size(request);
 
     buffer[0] = 0;
-    _copy_32bit_bigendian((uint32_t*)&buffer[1], &length);
+    _copy_32bit_bigendian((uint32_t*) &buffer[1], &length);
     protobuf_c_message_pack(request, &buffer[5]);
 
     return length + 5;
 }
 
-static esp_err_t _poll_get_mac(char* dest)
-{
-    uint8_t mac[6] = { 0 };
-
-    if (esp_read_mac(mac, ESP_MAC_WIFI_STA) != ESP_OK) {
-        ESP_LOGE(TAG, "Could not read WiFi MAC address");
-        return ESP_FAIL;
-    }
-
-    snprintf(dest, 18, "%02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-    ESP_LOGD(TAG, "MAC %s", dest);
-    return ESP_OK;
-}
-
-static Ganymede__V2__PollResponse* poll_perform(http2_session_t* session, const struct http_perform_options* options)
+static Ganymede__V2__PollResponse* _poll_perform(http2_session_t* session, const struct http_perform_options* options)
 {
     char mac_buffer[17] = { 0 };
 
     Ganymede__V2__PollRequest request;
     ganymede__v2__poll_request__init(&request);
     request.device_mac = mac_buffer;
-    
-    if (_poll_get_mac(request.device_mac) != ESP_OK) {
+
+    if (identity_get_device_mac(request.device_mac) != ESP_OK) {
         return NULL;
     }
 
-    uint32_t length = _pack_protobuf((ProtobufCMessage*)&request, _payload_buffer);
+    uint32_t length = _pack_protobuf((ProtobufCMessage*) &request, _payload_buffer);
 
     int status = http2_perform(session, "POST", CONFIG_GANYMEDE_AUTHORITY, "/ganymede.v2.DeviceService/Poll", (const char*) _payload_buffer, length, (char*) _response_buffer, sizeof(_response_buffer), *options);
 
@@ -110,11 +100,11 @@ static Ganymede__V2__PollResponse* poll_perform(http2_session_t* session, const 
         return NULL;
     }
 
-    _copy_32bit_bigendian(&length, (uint32_t*)&_response_buffer[1]);
+    _copy_32bit_bigendian(&length, (uint32_t*) &_response_buffer[1]);
     return (Ganymede__V2__PollResponse*) protobuf_c_message_unpack(&ganymede__v2__poll_response__descriptor, NULL, length, &_response_buffer[5]);
 }
 
-static int poll_set_timezone(const int64_t timezone_offset_minutes)
+static esp_err_t _poll_set_timezone(const int64_t timezone_offset_minutes)
 {
     // Ganymede returns the usual TZ offset (UTC - offset = local) but the
     // GNU implementation expects the opposite, so we invert the sign.
@@ -132,7 +122,91 @@ static int poll_set_timezone(const int64_t timezone_offset_minutes)
     return ESP_OK;
 }
 
-static void poll_refresh()
+static esp_err_t _poll_read_response_from_storage(Ganymede__V2__PollResponse** dest)
+{
+    esp_err_t rc;
+    nvs_handle_t nvs;
+    size_t length = sizeof(_response_buffer);
+
+    if (dest == NULL) {
+        return ESP_FAIL;
+    }
+
+    if ((rc = nvs_open("nvs", NVS_READONLY, &nvs)) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open non-volatile storage rc=%d", rc);
+        goto poll_read_response_from_storage_cleanup;
+    }
+
+    if ((rc = nvs_get_blob(nvs, "poll_response", _response_buffer, &length)) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read poll_response in non-volatile storage rc=%d", rc);
+        goto poll_read_response_from_storage_cleanup;
+    }
+
+    if ((*dest = (Ganymede__V2__PollResponse*) protobuf_c_message_unpack(&ganymede__v2__poll_response__descriptor, NULL, length, _response_buffer)) == NULL) {
+        ESP_LOGE(TAG, "Failed to unpack poll_response");
+        rc = ESP_FAIL;
+        goto poll_read_response_from_storage_cleanup;
+    }
+
+poll_read_response_from_storage_cleanup:
+    nvs_close(nvs);
+    return rc;
+}
+
+static esp_err_t _poll_write_response_to_storage(Ganymede__V2__PollResponse* response)
+{
+    esp_err_t rc;
+    nvs_handle_t nvs;
+    size_t length = 0;
+
+    if (response == NULL) {
+        return ESP_FAIL;
+    }
+
+    length = protobuf_c_message_pack((ProtobufCMessage*) response, _response_buffer);
+
+    if (length == 0) {
+        ESP_LOGE(TAG, "Failed to pack response");
+        return ESP_FAIL;
+    }
+
+    if ((rc = nvs_open("nvs", NVS_READWRITE, &nvs)) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open non-volatile storage rc=%d", rc);
+        goto poll_write_response_to_storage_cleanup;
+    }
+
+    if ((rc = nvs_set_blob(nvs, "poll_response", _response_buffer, length)) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to write poll response to non-volatile storage rc=%d", rc);
+        goto poll_write_response_to_storage_cleanup;
+    }
+
+poll_write_response_to_storage_cleanup:
+    nvs_close(nvs);
+    return rc;
+}
+
+static void _poll_handle_response(Ganymede__V2__PollResponse* response)
+{
+    if (response == NULL) {
+        return;
+    }
+
+    ESP_LOGI(TAG, "device=%s", response->device_display_name);
+    ESP_LOGI(TAG, "config=%s", response->config_display_name);
+
+    identity_set_device_id(response->device_uid);
+    _poll_set_timezone(response->timezone_offset_minutes);
+    lights_update_config(response->light_config);
+
+    int64_t poll_period_us = (response->poll_period->seconds * 1e6 + response->poll_period->nanos / 1e3);
+
+    if (poll_period_us >= 600e6) {
+        esp_timer_restart(_poll_refresh_timer, poll_period_us);
+        ESP_LOGD(TAG, "set refresh_timer to %lldus", poll_period_us);
+    }
+}
+
+static void _poll_refresh()
 {
     Ganymede__V2__PollResponse* response = NULL;
     http2_session_t* session = NULL;
@@ -153,45 +227,56 @@ static void poll_refresh()
         ESP_LOGE(TAG, "http2 session acquisition failed");
         goto cleanup;
     }
-    
+
     if (http2_session_connect(session, CONFIG_GANYMEDE_HOST, 443, CONFIG_GANYMEDE_AUTHORITY) != ESP_OK) {
         ESP_LOGE(TAG, "failed to connect to %s:443", CONFIG_GANYMEDE_HOST);
         goto cleanup;
     }
 
-    if ((response = poll_perform(session, &options)) == NULL) {
+    if ((response = _poll_perform(session, &options)) == NULL) {
         ESP_LOGE(TAG, "failed to fetch response");
         goto cleanup;
     }
-    ESP_LOGI(TAG, "device=%s", response->device_display_name);
-    ESP_LOGI(TAG, "config=%s", response->config_display_name);
 
-    poll_set_timezone(response->timezone_offset_minutes);
-    app_lights_notify_poll(response);
+    ESP_LOGD(TAG, "Writing poll response to non-volatile storage");
+    _poll_write_response_to_storage(response);
+    _poll_handle_response(response);
 
 cleanup:
     protobuf_c_message_free_unpacked((ProtobufCMessage*) response, NULL);
     http2_session_release(session);
 }
 
-static void poll_task(void* args)
+static void _poll_task(void* args)
 {
-    (void)args;
+    (void) args;
+
+    {
+        ESP_LOGD(TAG, "Reading latest poll response from non-volatile storage");
+        Ganymede__V2__PollResponse* response = NULL;
+
+        if (_poll_read_response_from_storage(&response) == ESP_OK) {
+            ESP_LOGI(TAG, "Read latest poll response from non-volatile storage");
+            _poll_handle_response(response);
+            protobuf_c_message_free_unpacked((ProtobufCMessage*) response, NULL);
+            response = NULL;
+        }
+    }
 
     esp_event_handler_instance_t ip_event_handler;
-    ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, ESP_EVENT_ANY_ID, &poll_event_handler, NULL, &ip_event_handler));
+    ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, ESP_EVENT_ANY_ID, &_poll_event_handler, NULL, &ip_event_handler));
 
     esp_event_handler_instance_t wifi_event_handler;
-    ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &poll_event_handler, NULL, &wifi_event_handler));
+    ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &_poll_event_handler, NULL, &wifi_event_handler));
 
     while (1) {
         xEventGroupWaitBits(_poll_event_group, POLL_CONNECTED_BIT | POLL_REFRESH_REQUEST_BIT, pdFALSE, pdTRUE, portMAX_DELAY);
-            poll_refresh();
-            xEventGroupClearBits(_poll_event_group, POLL_REFRESH_REQUEST_BIT);
+        _poll_refresh();
+        xEventGroupClearBits(_poll_event_group, POLL_REFRESH_REQUEST_BIT);
     }
 }
 
-int app_poll_init()
+esp_err_t app_poll_init()
 {
     if ((_poll_event_group = xEventGroupCreate()) == NULL) {
         return ESP_FAIL;
@@ -199,7 +284,7 @@ int app_poll_init()
 
     esp_timer_create_args_t args = {
         .dispatch_method = ESP_TIMER_TASK,
-        .callback = poll_timer_callback,
+        .callback = _poll_timer_callback,
         .arg = NULL
     };
 
@@ -207,16 +292,17 @@ int app_poll_init()
         return ESP_FAIL;
     }
 
-    if (xTaskCreate(&poll_task, "poll_task", POLLER_TASK_STACK_DEPTH, NULL, 4, NULL) != pdPASS) {
+    if (xTaskCreate(&_poll_task, "poll_task", POLLER_TASK_STACK_DEPTH, NULL, 4, NULL) != pdPASS) {
         ESP_LOGE(TAG, "Task creation failed");
         return ESP_FAIL;
     }
 
     xEventGroupSetBits(_poll_event_group, POLL_REFRESH_REQUEST_BIT);
-    return esp_timer_start_periodic(_poll_refresh_timer, 3600 * 10e6);
+    return esp_timer_start_periodic(_poll_refresh_timer, 3600e6);
 }
 
-void poll_request_refresh()
+esp_err_t poll_request_refresh()
 {
     xEventGroupSetBits(_poll_event_group, POLL_REFRESH_REQUEST_BIT);
+    return ESP_OK;
 }

@@ -1,6 +1,8 @@
 #ifndef NET__WIFI__WIFI_H_
 #define NET__WIFI__WIFI_H_
 
-int wifi_init(void);
+#include <esp_err.h>
 
-#endif
+esp_err_t wifi_init(void);
+
+#endif // NET__WIFI__WIFI_H_

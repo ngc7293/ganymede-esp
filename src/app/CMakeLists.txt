@@ -1,20 +1,19 @@
-add_library(ganymede.core
+add_component(ganymede.core
+    identity.c
+    identity.h
     lights.c
     lights.h
+    measurements.c
+    measurements.h
     poll.c
     poll.h
-)
-
-target_compile_options(ganymede.core
-    PUBLIC
-        -Wall
-        -Werror
 )
 
 target_link_libraries(ganymede.core
     PUBLIC
         api.ganymede
         net.auth
+        net.http2
         net.wifi
         idf::log
         idf::driver

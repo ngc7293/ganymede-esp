@@ -2,19 +2,20 @@
 #include <time.h>
 
 #include <esp_event.h>
+#include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <esp_sntp.h>
-#include <esp_heap_caps.h>
 
 #include <nvs_flash.h>
 
-#include <esp32s2/rom/uart.h>
 #include <driver/gpio.h>
 #include <driver/uart.h>
-
+#include <esp32s2/rom/uart.h>
 
 #include <api/error.h>
+#include <app/identity.h>
 #include <app/lights.h>
+#include <app/measurements.h>
 #include <app/poll.h>
 #include <net/auth/auth.h>
 #include <net/http2/http2.h>
@@ -55,18 +56,20 @@ void app_main(void)
         nvs_close(nvs);
     }
 
-    ERROR_CHECK(wifi_init());
-    ERROR_CHECK(http2_init());
-    ERROR_CHECK(auth_init());
-    ERROR_CHECK(app_poll_init());
-    ERROR_CHECK(app_lights_init());
+    // ERROR_CHECK(wifi_init());
+    // ERROR_CHECK(http2_init());
+    // ERROR_CHECK(auth_init());
+    // ERROR_CHECK(app_identity_init());
+    // ERROR_CHECK(app_poll_init());
+    // ERROR_CHECK(app_lights_init());
+    ERROR_CHECK(app_measurements_init());
 
     // SNTP
-    {
-        esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
-        esp_sntp_setservername(0, "pool.ntp.org");
-        esp_sntp_init();
-    }
+    // {
+    //     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    //     esp_sntp_setservername(0, "pool.ntp.org");
+    //     esp_sntp_init();
+    // }
 
     size_t cursor = 0;
     char linebuf[128];
@@ -83,11 +86,9 @@ void app_main(void)
 
                 if (strcmp(linebuf, "register") == 0) {
                     auth_request_register();
-                }
-                else if (strcmp(linebuf, "memory") == 0) {
+                } else if (strcmp(linebuf, "memory") == 0) {
                     report_memory();
-                }
-                else if (strcmp(linebuf, "poll") == 0) {
+                } else if (strcmp(linebuf, "poll") == 0) {
                     poll_request_refresh();
                 }
             } else {
