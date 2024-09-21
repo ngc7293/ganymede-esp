@@ -1,4 +1,11 @@
+# IDE settings
 .vscode/
+
+# Build artefacts
 _build/
+build/
+
+# Local configurations and secrets
 sdkconfig
 sdkconfig.old
+.env
