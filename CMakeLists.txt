@@ -10,7 +10,7 @@ set(GANYMEDE_COMPONENTS "${GANYMEDE_COMPONENTS}" CACHE INTERNAL "GANYMEDE_COMPON
 
 function(add_component TARGET)
     add_library(${TARGET} STATIC ${ARGN})
-    target_compile_options(${TARGET} PUBLIC -Wall -Werror)
+    target_compile_options(${TARGET} PRIVATE -Wall -Werror)
 
     list(APPEND GANYMEDE_COMPONENTS ${TARGET})
     set(GANYMEDE_COMPONENTS "${GANYMEDE_COMPONENTS}" CACHE INTERNAL "GANYMEDE_COMPONENTS")

@@ -1,0 +1,15 @@
+menu "Ganymede API"
+    config GANYMEDE_HOST
+        string "Ganymede services hostname"
+        default "ganymede.davidbourgault.ca"
+        help
+           IP address or DNS host to connect to. This can be different from
+           GANYMEDE_AUTHORITY
+
+    config GANYMEDE_AUTHORITY
+        string "Ganymede services authority"
+        default "ganymede.davidbourgault.ca"
+        help
+          Server name expected by the nginx ingress (if any). This could differ
+          from GANYMEDE_HOST when deploying the server on a local network.
+endmenu

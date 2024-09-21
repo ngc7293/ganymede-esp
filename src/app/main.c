@@ -56,20 +56,20 @@ void app_main(void)
         nvs_close(nvs);
     }
 
-    // ERROR_CHECK(wifi_init());
-    // ERROR_CHECK(http2_init());
-    // ERROR_CHECK(auth_init());
-    // ERROR_CHECK(app_identity_init());
-    // ERROR_CHECK(app_poll_init());
-    // ERROR_CHECK(app_lights_init());
+    ERROR_CHECK(wifi_init());
+    ERROR_CHECK(http2_init());
+    ERROR_CHECK(auth_init());
+    ERROR_CHECK(app_identity_init());
+    ERROR_CHECK(app_poll_init());
+    ERROR_CHECK(app_lights_init());
     ERROR_CHECK(app_measurements_init());
 
     // SNTP
-    // {
-    //     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
-    //     esp_sntp_setservername(0, "pool.ntp.org");
-    //     esp_sntp_init();
-    // }
+    {
+        esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+        esp_sntp_setservername(0, "pool.ntp.org");
+        esp_sntp_init();
+    }
 
     size_t cursor = 0;
     char linebuf[128];

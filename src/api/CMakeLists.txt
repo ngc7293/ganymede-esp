@@ -1,10 +1,3 @@
-add_library(api INTERFACE)
-
-target_link_libraries(api
-    INTERFACE
-        idf::esp_common
-)
-
 function (generate_protobuf_c)
     set(options)
     set(oneValueArgs TARGET)
@@ -12,8 +5,6 @@ function (generate_protobuf_c)
 
     cmake_parse_arguments(GENERATE_PROTOBUF_C "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
-    # unset(PROTO_C_HEADERS)
-    # unset(PROTO_C_SOURCES)
     set(PROTO_C_HEADERS)
     set(PROTO_C_SOURCES)
     set(PROTOS)
@@ -39,27 +30,12 @@ function (generate_protobuf_c)
     )
 
     target_sources(${GENERATE_PROTOBUF_C_TARGET} PRIVATE ${PROTO_C_SOURCES} ${PROTO_C_HEADERS})
-    target_include_directories(${GENERATE_PROTOBUF_C_TARGET} PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
+    target_include_directories(${GENERATE_PROTOBUF_C_TARGET} PUBLIC ${API_INCLUDE_ROOT})
     target_link_libraries(${GENERATE_PROTOBUF_C_TARGET} PUBLIC idf::protobuf-c)
 endfunction()
 
+set(API_INCLUDE_ROOT ${CMAKE_CURRENT_BINARY_DIR})
 
-add_library(api.google
-    STATIC
-        google/protobuf/duration.proto
-        google/protobuf/empty.proto
-        google/protobuf/timestamp.proto
-)
-generate_protobuf_c(TARGET api.google)
-
-
-add_library(api.ganymede
-    STATIC
-        ganymede/v2/device.proto
-        ganymede/v2/measurements.proto
-)
-target_link_libraries(api.ganymede PUBLIC api.google)
-generate_protobuf_c(TARGET api.ganymede)
-
-add_library(api.grpc.health.v1 STATIC grpc/health/v1/health.proto)
-generate_protobuf_c(TARGET api.grpc.health.v1)
+add_subdirectory(ganymede/v2)
+add_subdirectory(google/protobuf)
+add_subdirectory(grpc/health/v1)

@@ -12,15 +12,15 @@ add_component(ganymede.core
 target_link_libraries(ganymede.core
     PUBLIC
         api.ganymede
-        net.auth
-        net.http2
         net.wifi
-        idf::log
+        drivers
         idf::driver
-        idf::esp_wifi
         idf::esp_timer
+        idf::esp_wifi
+        idf::freertos
+        idf::log
+        idf::nvs_flash
 )
-
 target_kconfig(ganymede.core Kconfig)
 
 add_executable(ganymede
@@ -38,9 +38,9 @@ target_link_libraries(ganymede
         ganymede.core
         net.auth
         net.wifi
-        idf::driver
         idf::esp_common
         idf::esp_rom
+        idf::freertos
         idf::log
         idf::nvs_flash
 )

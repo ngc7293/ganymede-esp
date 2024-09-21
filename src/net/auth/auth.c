@@ -24,18 +24,20 @@
 #define AUTH_REFRESH_REQUEST_BIT  BIT1
 #define AUTH_REGISTER_REQUEST_BIT BIT2
 
-#define JSON_GET_KEY(dest, key, type, empty_value, exit_label)        \
-    do {                                                              \
-        cJSON* object = NULL;                                         \
-        if ((object = cJSON_GetObjectItem(json, key)) == NULL) {      \
-            rc = ESP_FAIL;                                            \
-            goto exit_label;                                          \
-        }                                                             \
-                                                                      \
-        if ((dest = cJSON_Get##type##Value(object)) == empty_value) { \
-            rc = ESP_FAIL;                                            \
-            goto exit_label;                                          \
-        }                                                             \
+#define JSON_GET_KEY(dest, key, type, empty_value, exit_label)           \
+    do {                                                                 \
+        cJSON* object = NULL;                                            \
+        if ((object = cJSON_GetObjectItem(json, key)) == NULL) {         \
+            ESP_LOGE(TAG, "json key %s is missing", key);                \
+            rc = ESP_FAIL;                                               \
+            goto exit_label;                                             \
+        }                                                                \
+                                                                         \
+        if ((dest = cJSON_Get##type##Value(object)) == empty_value) {    \
+            ESP_LOGE(TAG, "json key %s is of wrong type or empty", key); \
+            rc = ESP_FAIL;                                               \
+            goto exit_label;                                             \
+        }                                                                \
     } while (0)
 
 #define JSON_GET_STRING(dest, key, exit_label) JSON_GET_KEY(dest, key, String, NULL, exit_label)
@@ -113,17 +115,17 @@ static esp_err_t _auth_parse_device_code_response(const char* buffer, char** use
     esp_err_t rc = ESP_OK;
     cJSON* json = NULL;
 
-    if ((json = cJSON_Parse(buffer)) != NULL) {
+    if ((json = cJSON_Parse(buffer)) == NULL) {
         rc = ESP_FAIL;
-        goto auth_parse_device_code_cleanup;
+        goto exit;
     }
 
-    JSON_GET_STRING(*user_code, "user_code", auth_parse_device_code_cleanup);
-    JSON_GET_STRING(*device_code, "device_code", auth_parse_device_code_cleanup);
-    JSON_GET_NUMBER(*interval, "interval", auth_parse_device_code_cleanup);
-    JSON_GET_NUMBER(*expiry, "expiry", auth_parse_device_code_cleanup);
+    JSON_GET_STRING(*user_code, "user_code", exit);
+    JSON_GET_STRING(*device_code, "device_code", exit);
+    JSON_GET_NUMBER(*interval, "interval", exit);
+    JSON_GET_NUMBER(*expiry, "expires_in", exit);
 
-auth_parse_device_code_cleanup:
+exit:
     cJSON_free(json);
     return rc;
 }
@@ -133,18 +135,18 @@ static esp_err_t _auth_parse_token_response(const char* buffer, char** access_to
     esp_err_t rc = ESP_OK;
     cJSON* json = NULL;
 
-    if ((json = cJSON_Parse(buffer)) != NULL) {
+    if ((json = cJSON_Parse(buffer)) == NULL) {
         rc = ESP_FAIL;
-        goto auth_parse_token_response_cleanup;
+        goto exit;
     }
 
-    JSON_GET_STRING(*access_token, "access_token", auth_parse_token_response_cleanup);
+    JSON_GET_STRING(*access_token, "access_token", exit);
 
     if (refresh_token != NULL) {
-        JSON_GET_STRING(*refresh_token, "refresh_token", auth_parse_token_response_cleanup);
+        JSON_GET_STRING(*refresh_token, "refresh_token", exit);
     }
 
-auth_parse_token_response_cleanup:
+exit:
     cJSON_free(json);
     return rc;
 }
@@ -172,13 +174,13 @@ static esp_err_t _auth_perform_wait_for_token(http2_session_t* session, double i
         if (_auth_parse_token_response((const char*) _response_buffer, &access_token, &refresh_token) != ESP_OK) {
             ESP_LOGE(TAG, "failed to parse auth0 json response");
             rc = ESP_FAIL;
-            goto auth_perform_wait_for_token_cleanup;
+            goto exit;
         }
 
         _auth_write_credentials_to_storage(access_token, refresh_token);
     }
 
-auth_perform_wait_for_token_cleanup:
+exit:
     return rc;
 }
 
@@ -192,7 +194,7 @@ static esp_err_t _auth_perform_interactive_register(void)
     if (session == NULL) {
         ESP_LOGE(TAG, "failed to create http2 session");
         rc = ESP_FAIL;
-        goto auth_perform_interactive_register_cleanup;
+        goto exit;
     }
 
     // Perform HTTP call
@@ -200,7 +202,7 @@ static esp_err_t _auth_perform_interactive_register(void)
         if (http2_session_connect(session, CONFIG_AUTH_AUTH0_HOSTNAME, 443, NULL) != ESP_OK) {
             ESP_LOGE(TAG, "failed connect to %s:443", CONFIG_AUTH_AUTH0_HOSTNAME);
             rc = ESP_FAIL;
-            goto auth_perform_interactive_register_cleanup;
+            goto exit;
         }
 
         status = http2_perform(session, "POST", CONFIG_AUTH_AUTH0_HOSTNAME, "/oauth/device/code", DEVICE_TOKEN_REQUEST_PAYLOAD, strlen(DEVICE_TOKEN_REQUEST_PAYLOAD), (char*) _response_buffer, sizeof(_response_buffer), _http_perform_options);
@@ -208,7 +210,7 @@ static esp_err_t _auth_perform_interactive_register(void)
         if (status / 100 != 2) {
             ESP_LOGE(TAG, "auth0 returned non-2xx status: %d message=%s", status, _response_buffer);
             rc = ESP_FAIL;
-            goto auth_perform_interactive_register_cleanup;
+            goto exit;
         }
     }
 
@@ -222,7 +224,7 @@ static esp_err_t _auth_perform_interactive_register(void)
         if (_auth_parse_device_code_response((const char*) _response_buffer, &user_code, &device_code, &interval, &expiry) != ESP_OK) {
             ESP_LOGE(TAG, "failed to parse auth0 json response");
             rc = ESP_FAIL;
-            goto auth_perform_interactive_register_cleanup;
+            goto exit;
         }
 
         ESP_LOGI(TAG, "https://" CONFIG_AUTH_AUTH0_HOSTNAME "/activate?user_code=%s", user_code);
@@ -231,7 +233,7 @@ static esp_err_t _auth_perform_interactive_register(void)
         rc = _auth_perform_wait_for_token(session, interval, expiry);
     }
 
-auth_perform_interactive_register_cleanup:
+exit:
     http2_session_release(session);
     return rc;
 }
@@ -249,7 +251,7 @@ static esp_err_t _auth_perform_refresh(void)
     if ((session = http2_session_acquire(portMAX_DELAY)) == NULL) {
         ESP_LOGE(TAG, "failed to acquire http2 session");
         rc = ESP_FAIL;
-        goto auth_perform_refresh_cleanup;
+        goto exit;
     }
 
     // Prepare request
@@ -257,7 +259,7 @@ static esp_err_t _auth_perform_refresh(void)
         if (_auth_read_credentials_from_storage(NULL, NULL, refresh_token, &refresh_token_len) != ESP_OK) {
             ESP_LOGE(TAG, "failed read refresh token from storage");
             rc = ESP_FAIL;
-            goto auth_perform_refresh_cleanup;
+            goto exit;
         }
 
         snprintf((char*) _payload_buffer, sizeof(_payload_buffer), REFRESH_TOKEN_REQUEST_PAYLOAD_TEMPLATE, refresh_token);
@@ -265,17 +267,17 @@ static esp_err_t _auth_perform_refresh(void)
 
     // Perform HTTP call
     {
-        if (http2_session_connect(session, CONFIG_AUTH_AUTH0_HOSTNAME, 443, NULL) == ESP_FAIL) {
+        if (http2_session_connect(session, CONFIG_AUTH_AUTH0_HOSTNAME, 443, NULL) != ESP_OK) {
             ESP_LOGE(TAG, "failed connect to %s:443", CONFIG_AUTH_AUTH0_HOSTNAME);
             rc = ESP_FAIL;
-            goto auth_perform_refresh_cleanup;
+            goto exit;
         }
 
         status = http2_perform(session, "POST", CONFIG_AUTH_AUTH0_HOSTNAME, "/oauth/token", _payload_buffer, strlen(_payload_buffer), (char*) _response_buffer, sizeof(_response_buffer), _http_perform_options);
 
         if (status == 200) {
             rc = ESP_FAIL;
-            goto auth_perform_refresh_cleanup;
+            goto exit;
         }
     }
 
@@ -286,13 +288,13 @@ static esp_err_t _auth_perform_refresh(void)
         if (_auth_parse_token_response((const char*) _response_buffer, &access_token, NULL) != ESP_OK) {
             ESP_LOGE(TAG, "failed to parse auth0 json response");
             rc = ESP_FAIL;
-            goto auth_perform_refresh_cleanup;
+            goto exit;
         }
 
         _auth_write_credentials_to_storage(access_token, NULL);
     }
 
-auth_perform_refresh_cleanup:
+exit:
     http2_session_release(session);
     return rc;
 }

@@ -290,7 +290,7 @@ static esp_err_t _http2_ng_init(http2_session_t* session)
     if ((rc = nghttp2_option_new(&options)) != 0) {
         ESP_LOGE(TAG, "nghttp2_option_new rc=%d", rc);
         rc = ESP_FAIL;
-        goto http2_ng_init_exit;
+        goto exit;
     }
 
     nghttp2_option_set_no_closed_streams(options, true);
@@ -299,7 +299,7 @@ static esp_err_t _http2_ng_init(http2_session_t* session)
     if ((rc = nghttp2_session_callbacks_new(&callbacks)) != 0) {
         ESP_LOGE(TAG, "nghttp2_session_callbacks_new rc=%d", rc);
         rc = ESP_FAIL;
-        goto http2_ng_init_cleanup_options;
+        goto cleanup_options;
     }
 
     nghttp2_session_callbacks_set_send_callback(callbacks, _http2_tls_send);
@@ -312,16 +312,14 @@ static esp_err_t _http2_ng_init(http2_session_t* session)
     if ((rc = nghttp2_session_client_new3(&session->ng, callbacks, session, options, &_nghttp2_mem)) != 0) {
         ESP_LOGE(TAG, "nghttp2_session_client_new rc=%d", rc);
         rc = ESP_FAIL;
-        goto http2_ng_init_cleanup_callbacks;
     }
 
-http2_ng_init_cleanup_options:
-    nghttp2_option_del(options);
-
-http2_ng_init_cleanup_callbacks:
     nghttp2_session_callbacks_del(callbacks);
 
-http2_ng_init_exit:
+cleanup_options:
+    nghttp2_option_del(options);
+
+exit:
     return rc;
 }
 
@@ -360,7 +358,7 @@ static esp_err_t _http2_session_check_tls_conn(http2_session_t* session)
 {
     esp_tls_conn_state_t state;
 
-    if (esp_tls_get_conn_state(session->tls, &state) == ESP_FAIL || state != ESP_TLS_DONE) {
+    if (esp_tls_get_conn_state(session->tls, &state) != ESP_OK || state != ESP_TLS_DONE) {
         return ESP_FAIL;
     }
 
@@ -373,7 +371,7 @@ static esp_err_t _http2_session_perform_internal(http2_session_t* session, const
         return ESP_FAIL;
     }
 
-    if (_http2_session_check_tls_conn(session) == ESP_FAIL) {
+    if (_http2_session_check_tls_conn(session) != ESP_OK) {
         ESP_LOGE(TAG, "TLS connection not ok");
         return ESP_FAIL;
     }

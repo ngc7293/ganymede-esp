@@ -15,11 +15,10 @@
 #include <freertos/task.h>
 
 #include <api/error.h>
+#include <api/ganymede/v2/api.h>
 #include <app/identity.h>
 #include <app/lights.h>
 #include <ganymede/v2/device.pb-c.h>
-#include <net/auth/auth.h>
-#include <net/http2/http2.h>
 
 #include "poll.h"
 
@@ -29,13 +28,10 @@
 #define POLL_REFRESH_REQUEST_BIT BIT1
 
 static const char* TAG = "poll";
+static uint8_t _serialization_buffer[2048] = { 0 };
 
 static EventGroupHandle_t _poll_event_group = NULL;
 static esp_timer_handle_t _poll_refresh_timer = NULL;
-
-static char _token[1024] = { 0 };
-static uint8_t _payload_buffer[2048] = { 0 };
-static uint8_t _response_buffer[2048] = { 0 };
 
 static void _poll_event_handler(void* arg, esp_event_base_t source, int32_t id, void* data)
 {
@@ -58,52 +54,6 @@ static void _poll_timer_callback(void* args)
     xEventGroupSetBits(_poll_event_group, POLL_REFRESH_REQUEST_BIT);
 }
 
-static void _copy_32bit_bigendian(uint32_t* pdest, const uint32_t* psource)
-{
-    const unsigned char* source = (const unsigned char*) psource;
-    unsigned char* dest = (unsigned char*) pdest;
-    dest[0] = source[3];
-    dest[1] = source[2];
-    dest[2] = source[1];
-    dest[3] = source[0];
-}
-
-static size_t _pack_protobuf(ProtobufCMessage* request, uint8_t* buffer)
-{
-    uint32_t length = protobuf_c_message_get_packed_size(request);
-
-    buffer[0] = 0;
-    _copy_32bit_bigendian((uint32_t*) &buffer[1], &length);
-    protobuf_c_message_pack(request, &buffer[5]);
-
-    return length + 5;
-}
-
-static Ganymede__V2__PollResponse* _poll_perform(http2_session_t* session, const struct http_perform_options* options)
-{
-    char mac_buffer[17] = { 0 };
-
-    Ganymede__V2__PollRequest request;
-    ganymede__v2__poll_request__init(&request);
-    request.device_mac = mac_buffer;
-
-    if (identity_get_device_mac(request.device_mac) != ESP_OK) {
-        return NULL;
-    }
-
-    uint32_t length = _pack_protobuf((ProtobufCMessage*) &request, _payload_buffer);
-
-    int status = http2_perform(session, "POST", CONFIG_GANYMEDE_AUTHORITY, "/ganymede.v2.DeviceService/Poll", (const char*) _payload_buffer, length, (char*) _response_buffer, sizeof(_response_buffer), *options);
-
-    if (status != 0) {
-        ESP_LOGE(TAG, "Poll: status=%d", status);
-        return NULL;
-    }
-
-    _copy_32bit_bigendian(&length, (uint32_t*) &_response_buffer[1]);
-    return (Ganymede__V2__PollResponse*) protobuf_c_message_unpack(&ganymede__v2__poll_response__descriptor, NULL, length, &_response_buffer[5]);
-}
-
 static esp_err_t _poll_set_timezone(const int64_t timezone_offset_minutes)
 {
     // Ganymede returns the usual TZ offset (UTC - offset = local) but the
@@ -124,9 +74,10 @@ static esp_err_t _poll_set_timezone(const int64_t timezone_offset_minutes)
 
 static esp_err_t _poll_read_response_from_storage(Ganymede__V2__PollResponse** dest)
 {
-    esp_err_t rc;
+    esp_err_t rc = ESP_OK;
+
+    size_t length = sizeof(_serialization_buffer);
     nvs_handle_t nvs;
-    size_t length = sizeof(_response_buffer);
 
     if (dest == NULL) {
         return ESP_FAIL;
@@ -134,28 +85,28 @@ static esp_err_t _poll_read_response_from_storage(Ganymede__V2__PollResponse** d
 
     if ((rc = nvs_open("nvs", NVS_READONLY, &nvs)) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to open non-volatile storage rc=%d", rc);
-        goto poll_read_response_from_storage_cleanup;
+        goto exit;
     }
 
-    if ((rc = nvs_get_blob(nvs, "poll_response", _response_buffer, &length)) != ESP_OK) {
+    if ((rc = nvs_get_blob(nvs, "poll_response", _serialization_buffer, &length)) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to read poll_response in non-volatile storage rc=%d", rc);
-        goto poll_read_response_from_storage_cleanup;
+        goto exit;
     }
 
-    if ((*dest = (Ganymede__V2__PollResponse*) protobuf_c_message_unpack(&ganymede__v2__poll_response__descriptor, NULL, length, _response_buffer)) == NULL) {
+    if ((*dest = (Ganymede__V2__PollResponse*) protobuf_c_message_unpack(&ganymede__v2__poll_response__descriptor, NULL, length, _serialization_buffer)) == NULL) {
         ESP_LOGE(TAG, "Failed to unpack poll_response");
         rc = ESP_FAIL;
-        goto poll_read_response_from_storage_cleanup;
+        goto exit;
     }
 
-poll_read_response_from_storage_cleanup:
+exit:
     nvs_close(nvs);
     return rc;
 }
 
 static esp_err_t _poll_write_response_to_storage(Ganymede__V2__PollResponse* response)
 {
-    esp_err_t rc;
+    esp_err_t rc = ESP_OK;
     nvs_handle_t nvs;
     size_t length = 0;
 
@@ -163,7 +114,7 @@ static esp_err_t _poll_write_response_to_storage(Ganymede__V2__PollResponse* res
         return ESP_FAIL;
     }
 
-    length = protobuf_c_message_pack((ProtobufCMessage*) response, _response_buffer);
+    length = protobuf_c_message_pack((ProtobufCMessage*) response, _serialization_buffer);
 
     if (length == 0) {
         ESP_LOGE(TAG, "Failed to pack response");
@@ -172,15 +123,15 @@ static esp_err_t _poll_write_response_to_storage(Ganymede__V2__PollResponse* res
 
     if ((rc = nvs_open("nvs", NVS_READWRITE, &nvs)) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to open non-volatile storage rc=%d", rc);
-        goto poll_write_response_to_storage_cleanup;
+        goto exit;
     }
 
-    if ((rc = nvs_set_blob(nvs, "poll_response", _response_buffer, length)) != ESP_OK) {
+    if ((rc = nvs_set_blob(nvs, "poll_response", _serialization_buffer, length)) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to write poll response to non-volatile storage rc=%d", rc);
-        goto poll_write_response_to_storage_cleanup;
+        goto exit;
     }
 
-poll_write_response_to_storage_cleanup:
+exit:
     nvs_close(nvs);
     return rc;
 }
@@ -208,43 +159,24 @@ static void _poll_handle_response(Ganymede__V2__PollResponse* response)
 
 static void _poll_refresh()
 {
+    char mac_buffer[17] = { 0 };
+
+    Ganymede__V2__PollRequest request;
     Ganymede__V2__PollResponse* response = NULL;
-    http2_session_t* session = NULL;
-    size_t token_len = sizeof(_token) - 7;
 
-    strcpy(_token, "Bearer ");
-    if (auth_get_token(&_token[7], &token_len) != ESP_OK) {
-        goto cleanup;
+    ganymede__v2__poll_request__init(&request);
+    request.device_mac = mac_buffer;
+
+    if (identity_get_device_mac(request.device_mac) != ESP_OK) {
+        ESP_LOGE(TAG, "failed to retrieve device MAC address");
+        return;
     }
 
-    struct http_perform_options options = {
-        .authorization = _token,
-        .content_type = "application/grpc+proto",
-        .use_grpc_status = true
-    };
-
-    if ((session = http2_session_acquire(portMAX_DELAY)) == NULL) {
-        ESP_LOGE(TAG, "http2 session acquisition failed");
-        goto cleanup;
+    if (ganymede_api_v2_poll_device(&request, &response) == GRPC_STATUS_OK) {
+        _poll_write_response_to_storage(response);
+        _poll_handle_response(response);
+        protobuf_c_message_free_unpacked((ProtobufCMessage*) response, NULL);
     }
-
-    if (http2_session_connect(session, CONFIG_GANYMEDE_HOST, 443, CONFIG_GANYMEDE_AUTHORITY) != ESP_OK) {
-        ESP_LOGE(TAG, "failed to connect to %s:443", CONFIG_GANYMEDE_HOST);
-        goto cleanup;
-    }
-
-    if ((response = _poll_perform(session, &options)) == NULL) {
-        ESP_LOGE(TAG, "failed to fetch response");
-        goto cleanup;
-    }
-
-    ESP_LOGD(TAG, "Writing poll response to non-volatile storage");
-    _poll_write_response_to_storage(response);
-    _poll_handle_response(response);
-
-cleanup:
-    protobuf_c_message_free_unpacked((ProtobufCMessage*) response, NULL);
-    http2_session_release(session);
 }
 
 static void _poll_task(void* args)
