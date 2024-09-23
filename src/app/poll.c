@@ -157,15 +157,29 @@ static void _poll_handle_response(Ganymede__V2__PollResponse* response)
     }
 }
 
+static esp_err_t _poll_build_uptime(Google__Protobuf__Duration* dest)
+{
+    int64_t micros = esp_timer_get_time();
+
+    google__protobuf__duration__init(dest);
+    dest->seconds = micros / 1000000;
+    dest->nanos = (micros % 1000000) * 1000;
+    return ESP_OK;
+}
+
 static void _poll_refresh()
 {
     char mac_buffer[17] = { 0 };
 
     Ganymede__V2__PollRequest request;
+    Google__Protobuf__Duration uptime;
     Ganymede__V2__PollResponse* response = NULL;
 
     ganymede__v2__poll_request__init(&request);
+    
     request.device_mac = mac_buffer;
+    request.uptime = &uptime;
+    _poll_build_uptime(request.uptime);
 
     if (identity_get_device_mac(request.device_mac) != ESP_OK) {
         ESP_LOGE(TAG, "failed to retrieve device MAC address");

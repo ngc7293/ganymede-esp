@@ -126,7 +126,7 @@ const char* grpc_status_to_str(grpc_status_t status)
         "Unauthenticated",
     };
 
-    return grpc_status_names[status + 1];
+    return grpc_status_names[status];
 }
 
 esp_err_t ganymede_api_v2_init(void)

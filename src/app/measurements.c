@@ -72,7 +72,7 @@ static esp_err_t _measurements_build_atmosphere_measurement(Ganymede__V2__Measur
 
     (*dest)->device_id = device_id;
     (*dest)->timestamp->seconds = observed_on;
-    (*dest)->atmosphere->humidity = relative_humidity;
+    (*dest)->atmosphere->relative_humidity = relative_humidity;
     (*dest)->atmosphere->temperature = temperature;
 
     goto exit; // Don't free! // FIXME: Very weird function flow, refactor this

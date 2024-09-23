@@ -29,13 +29,19 @@ message GetMeasurementsResponse {
 
 // Primitive message types
 message AtmosphericMeasurements {
+    float temperature = 1;       // In Celsius
+    float relative_humidity = 2; // In RH [0.0, 1.0]
+}
+
+message SoilMeasurements { 
     float temperature = 1;  // In Celsius
-    float humidity = 2;     // In RH %
+    float humidity = 2;     // In mass fraction [0.0, 1.0]
 }
 
 message Measurement {
     string device_id = 1;
-    google.protobuf.Timestamp timestamp = 2;
+    google.protobuf.Timestamp timestamp = 2; // UTC
 
     AtmosphericMeasurements atmosphere = 10;
+    SoilMeasurements soil = 11;
 }

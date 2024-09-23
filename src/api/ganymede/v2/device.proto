@@ -1,7 +1,8 @@
 syntax = "proto3";
 
-import "google/protobuf/empty.proto";
 import "google/protobuf/duration.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
 
 package ganymede.v2;
 
@@ -53,6 +54,9 @@ message DeleteDeviceRequest {
 
 message PollRequest {
     string device_mac = 1;
+
+    // Time elapsed since last restart
+    google.protobuf.Duration uptime = 2;
 }
 
 message PollResponse {
@@ -102,7 +106,6 @@ message DeleteConfigResponse {
 
 // Primitive message types
 message Device {
-    // Output only.
     string uid = 1;
 
     string mac = 2;
@@ -116,6 +119,10 @@ message Device {
     string timezone = 12;
 
     string config_uid = 20;
+
+    // Output only. Time elapsed since last restart
+    google.protobuf.Timestamp last_poll = 100;
+    google.protobuf.Duration uptime = 101;
 }
 
 message Time {
@@ -148,6 +155,8 @@ message Config {
     string uid = 1;
 
     string display_name = 2;
+
+    google.protobuf.Duration poll_period = 3;
 
     reserved 10, 11;
     reserved "pomp_config", "solution_config";
