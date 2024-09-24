@@ -176,7 +176,7 @@ static void _poll_refresh()
     Ganymede__V2__PollResponse* response = NULL;
 
     ganymede__v2__poll_request__init(&request);
-    
+
     request.device_mac = mac_buffer;
     request.uptime = &uptime;
     _poll_build_uptime(request.uptime);
