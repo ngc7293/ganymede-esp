@@ -101,14 +101,14 @@ static esp_err_t measurements_push_(time_t timestamps[], float humidities[], flo
     }
 
     esp_err_t rc = ESP_OK;
-    ssize_t i = 0;
+    ssize_t allocated = 0;
 
     Ganymede__V2__PushMeasurementsRequest request;
     ganymede__v2__push_measurements_request__init(&request);
 
     Ganymede__V2__Measurement** measurements = (Ganymede__V2__Measurement**) malloc(len * sizeof(Ganymede__V2__Measurement*));
 
-    for (; i < len; i++) {
+    for (ssize_t i = 0; i < len; i++, allocated++) {
         if (measurements_build_atmosphere_measurement_(&measurements[i], device_id, timestamps[i], humidities[i], temperatures[i]) != ESP_OK) {
             goto cleanup;
         }
@@ -123,10 +123,10 @@ static esp_err_t measurements_push_(time_t timestamps[], float humidities[], flo
     }
 
 cleanup:
-    for (; i > 0; i--) {
-        free(measurements[i - 1]->atmosphere);
-        free(measurements[i - 1]->timestamp);
-        free(measurements[i - 1]);
+    for (ssize_t i = allocated - 1; i >= 0; i--) {
+        free(measurements[i]->atmosphere);
+        free(measurements[i]->timestamp);
+        free(measurements[i]);
     }
     free(measurements);
 
