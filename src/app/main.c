@@ -21,7 +21,7 @@
 #include <net/http2/http2.h>
 #include <net/wifi/wifi.h>
 
-static int _nvs_try_init()
+static int nvs_try_init_(void)
 {
     esp_err_t rc = nvs_flash_init();
 
@@ -33,44 +33,17 @@ static int _nvs_try_init()
     return rc;
 }
 
-static void report_memory()
+static void report_memory(void)
 {
     uint32_t available = heap_caps_get_free_size(MALLOC_CAP_DEFAULT);
     uint32_t total = heap_caps_get_total_size(MALLOC_CAP_DEFAULT);
     uint32_t largest_block = heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT);
 
-    printf("Memory: Available %lu/%lu (Largest %lu)\n", available, total, largest_block);
+    printf("Memory: Available %" PRIu32 "/%" PRIu32 " (Largest %" PRIu32 ")\n", available, total, largest_block);
 }
 
-void app_main(void)
+static void main_run_console_loop_(void)
 {
-    ERROR_CHECK(esp_event_loop_create_default());
-    ERROR_CHECK(_nvs_try_init());
-
-    // NVS
-    {
-        nvs_handle_t nvs;
-        ERROR_CHECK(nvs_open("nvs", NVS_READWRITE, &nvs));
-        ERROR_CHECK(nvs_set_str(nvs, "wifi-ssid", CONFIG_WIFI_SSID));
-        ERROR_CHECK(nvs_set_str(nvs, "wifi-password", CONFIG_WIFI_PASSPRHASE));
-        nvs_close(nvs);
-    }
-
-    ERROR_CHECK(wifi_init());
-    ERROR_CHECK(http2_init());
-    ERROR_CHECK(auth_init());
-    ERROR_CHECK(app_identity_init());
-    ERROR_CHECK(app_poll_init());
-    ERROR_CHECK(app_lights_init());
-    ERROR_CHECK(app_measurements_init());
-
-    // SNTP
-    {
-        esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
-        esp_sntp_setservername(0, "pool.ntp.org");
-        esp_sntp_init();
-    }
-
     size_t cursor = 0;
     char linebuf[128];
 
@@ -98,4 +71,36 @@ void app_main(void)
 
         vTaskDelay(10 / portTICK_PERIOD_MS);
     }
+}
+
+void app_main(void)
+{
+    ERROR_CHECK(esp_event_loop_create_default());
+    ERROR_CHECK(nvs_try_init_());
+
+    // NVS
+    {
+        nvs_handle_t nvs;
+        ERROR_CHECK(nvs_open("nvs", NVS_READWRITE, &nvs));
+        ERROR_CHECK(nvs_set_str(nvs, "wifi-ssid", CONFIG_WIFI_SSID));
+        ERROR_CHECK(nvs_set_str(nvs, "wifi-password", CONFIG_WIFI_PASSPRHASE));
+        nvs_close(nvs);
+    }
+
+    ERROR_CHECK(wifi_init());
+    ERROR_CHECK(http2_init());
+    ERROR_CHECK(auth_init());
+    ERROR_CHECK(app_identity_init());
+    ERROR_CHECK(app_poll_init());
+    ERROR_CHECK(app_lights_init());
+    ERROR_CHECK(app_measurements_init());
+
+    // SNTP
+    {
+        esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+        esp_sntp_setservername(0, "pool.ntp.org");
+        esp_sntp_init();
+    }
+
+    main_run_console_loop_();
 }

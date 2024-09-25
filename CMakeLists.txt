@@ -2,7 +2,10 @@ cmake_minimum_required(VERSION 3.18)
 project(ganymede VERSION 0.0.1)
 
 set(CMAKE_SYSTEM_NAME Generic)
-add_compile_options(-mlongcalls)
+
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    add_compile_options(-mlongcalls)
+endif()
 
 include($ENV{IDF_PATH}/tools/cmake/idf.cmake)
 

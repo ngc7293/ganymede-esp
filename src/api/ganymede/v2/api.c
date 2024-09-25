@@ -13,17 +13,17 @@
 
 static char* TAG = "api";
 
-static char _token[1024] = { 0 };
-static uint8_t _payload_buffer[2048] = { 0 };
-static uint8_t _response_buffer[2048] = { 0 };
+static char token_[CONFIG_AUTH_ACCESS_TOKEN_LEN + 7] = { 0 };
+static uint8_t payload_buffer_[CONFIG_GRPC_PAYLOAD_BUFFER_LEN] = { 0 };
+static uint8_t response_buffer_[CONFIG_GRPC_RESPONSE_BUFFER_LEN] = { 0 };
 
-static const struct http_perform_options _http_perform_options = {
-    .authorization = _token,
+static const struct http_perform_options http_perform_options_ = {
+    .authorization = token_,
     .content_type = "application/grpc+proto",
     .use_grpc_status = true
 };
 
-static void _ganymede_api_v2_copy_32bit_bigendian(uint32_t* pdest, const uint32_t* psource)
+static void ganymede_api_v2_copy_32bit_bigendian_(uint32_t* pdest, const uint32_t* psource)
 {
     const unsigned char* source = (const unsigned char*) psource;
     unsigned char* dest = (unsigned char*) pdest;
@@ -33,29 +33,31 @@ static void _ganymede_api_v2_copy_32bit_bigendian(uint32_t* pdest, const uint32_
     dest[3] = source[0];
 }
 
-static size_t _ganymede_api_v2_pack_protobuf(const ProtobufCMessage* request, uint8_t* buffer)
+static size_t ganymede_api_v2_pack_protobuf_(const ProtobufCMessage* request, uint8_t* buffer)
 {
     uint32_t length = protobuf_c_message_get_packed_size(request);
 
     buffer[0] = 0;
-    _ganymede_api_v2_copy_32bit_bigendian((uint32_t*) &buffer[1], &length);
+    ganymede_api_v2_copy_32bit_bigendian_((uint32_t*) &buffer[1], &length);
     protobuf_c_message_pack(request, &buffer[5]);
 
     return length + 5;
 }
 
-grpc_status_t _ganymede_api_v2_perform(const char* rpc, const ProtobufCMessage* request, const ProtobufCMessageDescriptor* response_descriptor, ProtobufCMessage** response_dest)
+grpc_status_t ganymede_api_v2_perform_(const char* rpc, const ProtobufCMessage* request, const ProtobufCMessageDescriptor* response_descriptor, ProtobufCMessage** response_dest)
 {
     grpc_status_t rc = GRPC_STATUS_LOCAL_ERROR;
 
     http2_session_t* session = NULL;
     uint32_t payload_len = 0;
-    size_t token_len = sizeof(_token) - 7;
+    size_t token_len = sizeof(token_) - 7;
 
     // Prepare HTTP2 session
     {
         // FIXME: Temporarily using the HTTP2 mutex as our mutex too
-        if ((session = http2_session_acquire(portMAX_DELAY)) == NULL) {
+        session = http2_session_acquire(portMAX_DELAY);
+
+        if (session == NULL) {
             ESP_LOGE(TAG, "http2 session acquisition failed");
             goto cleanup;
         }
@@ -68,18 +70,18 @@ grpc_status_t _ganymede_api_v2_perform(const char* rpc, const ProtobufCMessage* 
 
     // Prepare HTTP2/GRPC request
     {
-        strcpy(_token, "Bearer ");
-        if (auth_get_token(&_token[7], &token_len) != ESP_OK) {
+        strncpy(token_, "Bearer ", 7);
+        if (auth_get_token(&token_[7], &token_len) != ESP_OK) {
             ESP_LOGE(TAG, "auth token retrieval failed");
             goto cleanup;
         }
 
-        payload_len = _ganymede_api_v2_pack_protobuf((ProtobufCMessage*) request, _payload_buffer);
+        payload_len = ganymede_api_v2_pack_protobuf_((ProtobufCMessage*) request, payload_buffer_);
     }
 
     // Perform HTTP2 operation
     {
-        rc = (grpc_status_t) http2_perform(session, "POST", CONFIG_GANYMEDE_AUTHORITY, rpc, (const char*) _payload_buffer, payload_len, (char*) _response_buffer, sizeof(_response_buffer), _http_perform_options);
+        rc = (grpc_status_t) http2_perform(session, "POST", CONFIG_GANYMEDE_AUTHORITY, rpc, (const char*) payload_buffer_, payload_len, (char*) response_buffer_, sizeof(response_buffer_), http_perform_options_);
 
         if (rc != GRPC_STATUS_OK) {
             ESP_LOGE(TAG, "Poll: status=%d %s", rc, grpc_status_to_str(rc));
@@ -90,8 +92,8 @@ grpc_status_t _ganymede_api_v2_perform(const char* rpc, const ProtobufCMessage* 
     // Handle response if needed
     {
         if (response_descriptor != NULL) {
-            _ganymede_api_v2_copy_32bit_bigendian(&payload_len, (uint32_t*) &_response_buffer[1]);
-            *response_dest = protobuf_c_message_unpack(response_descriptor, NULL, payload_len, &_response_buffer[5]);
+            ganymede_api_v2_copy_32bit_bigendian_(&payload_len, (uint32_t*) &response_buffer_[1]);
+            *response_dest = protobuf_c_message_unpack(response_descriptor, NULL, payload_len, &response_buffer_[5]);
         }
     }
 
@@ -136,10 +138,10 @@ esp_err_t ganymede_api_v2_init(void)
 
 grpc_status_t ganymede_api_v2_poll_device(const Ganymede__V2__PollRequest* request, Ganymede__V2__PollResponse** response)
 {
-    return _ganymede_api_v2_perform("/ganymede.v2.DeviceService/Poll", (const ProtobufCMessage*) request, &ganymede__v2__poll_response__descriptor, (ProtobufCMessage**) response);
+    return ganymede_api_v2_perform_("/ganymede.v2.DeviceService/Poll", (const ProtobufCMessage*) request, &ganymede__v2__poll_response__descriptor, (ProtobufCMessage**) response);
 }
 
 grpc_status_t ganymede_api_v2_push_measurements(const Ganymede__V2__PushMeasurementsRequest* request)
 {
-    return _ganymede_api_v2_perform("/ganymede.v2.MeasurementsService/PushMeasurements", (const ProtobufCMessage*) request, NULL, NULL);
+    return ganymede_api_v2_perform_("/ganymede.v2.MeasurementsService/PushMeasurements", (const ProtobufCMessage*) request, NULL, NULL);
 }

@@ -4,7 +4,35 @@ menu "Authentication"
         string "Auth0 tenant hostname"
         default "dev-ganymede.us.auth0.com"
 
+    config AUTH_AUTH0_PORT
+        int "Auth0 HTTP(S) port"
+        default 443
+
     config AUTH_AUTH0_CLIENT_ID
         string "Auth0 Client ID"
+
+    config AUTH_PAYLOAD_BUFFER_LENGTH
+        int "Length of buffer for payload sent to authorization server (bytes)"
+        default 2048
+        help
+            This is also used for token refresh calls, so must be able to contain it and more.
+
+    config AUTH_RESPONSE_BUFFER_LEN
+        int "Length of buffer for responses received from the authorization server (bytes)"
+        default 2048
+        help
+            Must be able to hold the access and refresh token, and more.
+
+    config AUTH_ACCESS_TOKEN_LEN
+        int "Maximum length of the access token including the NULL terminator (bytes)"
+        default 512
+
+    config AUTH_REFRESH_TOKEN_LEN
+        int "Maximum length of the refresh token including the NULL terminator (bytes)"
+        default 512
+
+    config AUTH_REFRESH_INTERVAL
+        int "How long to wait before refreshing the access token (seconds)"
+        default 3600
 
 endmenu

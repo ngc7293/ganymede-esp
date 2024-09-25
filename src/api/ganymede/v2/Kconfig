@@ -12,4 +12,22 @@ menu "Ganymede API"
         help
           Server name expected by the nginx ingress (if any). This could differ
           from GANYMEDE_HOST when deploying the server on a local network.
+
+    config GANYMEDE_POLL_RESPONSE_MAX_SIZE
+        int "Maximum supported length for serialized PollResponses (bytes)"
+        default 2048
+
+    config GANYMEDE_LIGHT_CONFIG_MAX_SIZE
+        int "Maximum supported length for serialized LightConfigs (bytes)"
+        default 512
+
+    config GRPC_PAYLOAD_BUFFER_LEN
+        int "Length of buffer for payload sent to Ganymede server (bytes)"
+        default 2048
+        help
+            Should be larger or equal to the PollResponse's maximum length.
+
+    config GRPC_RESPONSE_BUFFER_LEN
+        int "Length of buffer for payload sent to Ganymede server (bytes)"
+        default 2048
 endmenu

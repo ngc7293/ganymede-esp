@@ -11,12 +11,14 @@
 
 static const char* TAG = "identity";
 
-static SemaphoreHandle_t _device_id_mutex = NULL;
-static char _device_id[DEVICE_ID_LEN] = { 0 };
+static SemaphoreHandle_t device_id_mutex_ = NULL;
+static char device_id_[DEVICE_ID_LEN] = { 0 };
 
 esp_err_t app_identity_init()
 {
-    if ((_device_id_mutex = xSemaphoreCreateMutex()) == NULL) {
+    device_id_mutex_ = xSemaphoreCreateMutex();
+
+    if (device_id_mutex_ == NULL) {
         ESP_LOGE(TAG, "Mutex initialization failed");
         return ESP_FAIL;
     }
@@ -26,7 +28,9 @@ esp_err_t app_identity_init()
 
 esp_err_t identity_get_device_mac(char dest[DEVICE_MAC_LEN])
 {
-    uint8_t mac[6] = { 0 };
+    // We expect 6 bytes, but read_mac could return 8 in some cases. Better to
+    // not crash.
+    uint8_t mac[8] = { 0 };
 
     if (esp_read_mac(mac, ESP_MAC_WIFI_STA) != ESP_OK) {
         ESP_LOGE(TAG, "Could not read WiFi MAC address");
@@ -42,10 +46,10 @@ esp_err_t identity_set_device_id(const char identity[DEVICE_ID_LEN])
 {
     esp_err_t rc = ESP_FAIL;
 
-    if (xSemaphoreTake(_device_id_mutex, portMAX_DELAY) == pdTRUE) {
-        strncpy(_device_id, identity, DEVICE_ID_LEN);
+    if (xSemaphoreTake(device_id_mutex_, portMAX_DELAY) == pdTRUE) {
+        strncpy(device_id_, identity, DEVICE_ID_LEN);
         rc = ESP_OK;
-        xSemaphoreGive(_device_id_mutex);
+        xSemaphoreGive(device_id_mutex_);
     } else {
         ESP_LOGE(TAG, "Failed to obtain _device_id mutex");
     }
@@ -57,9 +61,9 @@ esp_err_t identity_get_device_id(char dest[DEVICE_ID_LEN])
 {
     esp_err_t rc = ESP_FAIL;
 
-    if (xSemaphoreTake(_device_id_mutex, portMAX_DELAY) == pdTRUE) {
-        strncpy(dest, _device_id, DEVICE_ID_LEN);
-        xSemaphoreGive(_device_id_mutex);
+    if (xSemaphoreTake(device_id_mutex_, portMAX_DELAY) == pdTRUE) {
+        strncpy(dest, device_id_, DEVICE_ID_LEN);
+        xSemaphoreGive(device_id_mutex_);
         rc = ESP_OK;
     } else {
         ESP_LOGE(TAG, "Failed to obtain _device_id mutex");

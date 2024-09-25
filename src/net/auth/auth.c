@@ -18,22 +18,17 @@
 #include <api/error.h>
 #include <net/http2/http2.h>
 
-#define AUTH_TASK_STACK_DEPTH (1024 * 4)
-
-#define AUTH_CONNECTED_BIT        BIT0
-#define AUTH_REFRESH_REQUEST_BIT  BIT1
-#define AUTH_REGISTER_REQUEST_BIT BIT2
-
 #define JSON_GET_KEY(dest, key, type, empty_value, exit_label)           \
     do {                                                                 \
-        cJSON* object = NULL;                                            \
-        if ((object = cJSON_GetObjectItem(json, key)) == NULL) {         \
+        cJSON* object = cJSON_GetObjectItem(json, key);                  \
+        if (object == NULL) {                                            \
             ESP_LOGE(TAG, "json key %s is missing", key);                \
             rc = ESP_FAIL;                                               \
             goto exit_label;                                             \
         }                                                                \
                                                                          \
-        if ((dest = cJSON_Get##type##Value(object)) == empty_value) {    \
+        (dest) = cJSON_Get##type##Value(object);                         \
+        if ((dest) == (empty_value)) {                                   \
             ESP_LOGE(TAG, "json key %s is of wrong type or empty", key); \
             rc = ESP_FAIL;                                               \
             goto exit_label;                                             \
@@ -43,40 +38,53 @@
 #define JSON_GET_STRING(dest, key, exit_label) JSON_GET_KEY(dest, key, String, NULL, exit_label)
 #define JSON_GET_NUMBER(dest, key, exit_label) JSON_GET_KEY(dest, key, Number, NAN, exit_label)
 
+enum {
+    AUTH_TASK_STACK_DEPTH = 1024 * 4,
+
+    // EventBit: network connection has been established
+    AUTH_CONNECTED_BIT = BIT0,
+
+    // EventBit: a refresh of the access token is requested
+    AUTH_REFRESH_REQUEST_BIT = BIT1,
+
+    // EventBit: the user requested to register the device with Auth0
+    AUTH_REGISTER_REQUEST_BIT = BIT2,
+};
+
 static const char* TAG = "auth";
 
 static const char* DEVICE_TOKEN_REQUEST_PAYLOAD = "{\"client_id\":\"" CONFIG_AUTH_AUTH0_CLIENT_ID "\",\"scope\":\"offline_access\",\"audience\":\"ganymede-api\"}";
 static const char* ACCESS_TOKEN_REQUEST_PAYLOAD_TEMPLATE = "{\"client_id\":\"" CONFIG_AUTH_AUTH0_CLIENT_ID "\",\"grant_type\":\"urn:ietf:params:oauth:grant-type:device_code\",\"device_code\":\"%s\"}";
 static const char* REFRESH_TOKEN_REQUEST_PAYLOAD_TEMPLATE = "{\"client_id\":\"" CONFIG_AUTH_AUTH0_CLIENT_ID "\",\"grant_type\":\"refresh_token\",\"refresh_token\":\"%s\"}";
 
-static EventGroupHandle_t _auth_event_group = NULL;
-static esp_timer_handle_t _auth_refresh_timer = NULL;
+static EventGroupHandle_t auth_event_group_ = NULL;
+static esp_timer_handle_t auth_refresh_timer_ = NULL;
 
-static char _payload_buffer[2048] = { 0 };
-static char _response_buffer[2048] = { 0 };
+static char payload_buffer_[CONFIG_AUTH_RESPONSE_BUFFER_LEN] = { 0 };
+static char response_buffer_[CONFIG_AUTH_RESPONSE_BUFFER_LEN] = { 0 };
 
-static const struct http_perform_options _http_perform_options = {
+static const struct http_perform_options http_perform_options_ = {
     .content_type = "application/json",
     .authorization = "",
     .use_grpc_status = false
 };
 
-static void _auth_event_handler(void* arg, esp_event_base_t source, int32_t id, void* data)
+static void auth_event_handler_(void* arg, esp_event_base_t event_source, int32_t event_id, void* data)
 {
-    if (source == IP_EVENT) {
-        if (id == IP_EVENT_STA_GOT_IP) {
-            xEventGroupSetBits(_auth_event_group, AUTH_CONNECTED_BIT);
-        } else if (id == IP_EVENT_STA_LOST_IP) {
-            xEventGroupClearBits(_auth_event_group, AUTH_CONNECTED_BIT);
+    if (event_source == IP_EVENT) {
+        if (event_id == IP_EVENT_STA_GOT_IP) {
+            xEventGroupSetBits(auth_event_group_, AUTH_CONNECTED_BIT);
+        } else if (event_id == IP_EVENT_STA_LOST_IP) {
+            xEventGroupClearBits(auth_event_group_, AUTH_CONNECTED_BIT);
         }
-    } else if (source == WIFI_EVENT) {
-        if (id == WIFI_EVENT_STA_DISCONNECTED) {
-            xEventGroupClearBits(_auth_event_group, AUTH_CONNECTED_BIT);
+    } else if (event_source == WIFI_EVENT) {
+        if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
+            xEventGroupClearBits(auth_event_group_, AUTH_CONNECTED_BIT);
         }
     }
 }
 
-static esp_err_t _auth_read_credentials_from_storage(char* access_token, size_t* access_token_len, char* refresh_token, size_t* refresh_token_len)
+static esp_err_t auth_read_credentials_from_storage_(char* access_token, size_t* access_token_len, char* refresh_token, size_t* refresh_token_len)
 {
     nvs_handle_t nvs;
     esp_err_t rc = nvs_open("nvs", NVS_READONLY, &nvs);
@@ -93,7 +101,7 @@ static esp_err_t _auth_read_credentials_from_storage(char* access_token, size_t*
     return rc;
 }
 
-static esp_err_t _auth_write_credentials_to_storage(const char* access_token, const char* refresh_token)
+static esp_err_t auth_write_credentials_to_storage_(const char* access_token, const char* refresh_token)
 {
     nvs_handle_t nvs;
     esp_err_t rc = nvs_open("nvs", NVS_READWRITE, &nvs);
@@ -110,12 +118,13 @@ static esp_err_t _auth_write_credentials_to_storage(const char* access_token, co
     return rc;
 }
 
-static esp_err_t _auth_parse_device_code_response(const char* buffer, char** user_code, char** device_code, double* interval, double* expiry)
+static esp_err_t auth_parse_device_code_response_(const char* buffer, char** user_code, char** device_code, double* interval, double* expiry)
 {
     esp_err_t rc = ESP_OK;
-    cJSON* json = NULL;
 
-    if ((json = cJSON_Parse(buffer)) == NULL) {
+    cJSON* json = cJSON_Parse(buffer);
+
+    if (json == NULL) {
         rc = ESP_FAIL;
         goto exit;
     }
@@ -130,12 +139,13 @@ exit:
     return rc;
 }
 
-static esp_err_t _auth_parse_token_response(const char* buffer, char** access_token, char** refresh_token)
+static esp_err_t auth_parse_token_response_(const char* buffer, char** access_token, char** refresh_token)
 {
     esp_err_t rc = ESP_OK;
-    cJSON* json = NULL;
 
-    if ((json = cJSON_Parse(buffer)) == NULL) {
+    cJSON* json = cJSON_Parse(buffer);
+
+    if (json == NULL) {
         rc = ESP_FAIL;
         goto exit;
     }
@@ -151,16 +161,16 @@ exit:
     return rc;
 }
 
-static esp_err_t _auth_perform_wait_for_token(http2_session_t* session, double interval, double expiry)
+static esp_err_t auth_perform_wait_for_token_(http2_session_t* session, double interval, double expiry)
 {
     esp_err_t rc = ESP_OK;
     int status = -1;
 
-    int64_t end = esp_timer_get_time() + (expiry * 1e6);
+    int64_t end = esp_timer_get_time() + (int64_t) (expiry * 1000 * 1000);
 
     while (esp_timer_get_time() < end) {
-        vTaskDelay((interval * 1000) / portTICK_PERIOD_MS);
-        status = http2_perform(session, "POST", CONFIG_AUTH_AUTH0_HOSTNAME, "/oauth/token", _payload_buffer, strlen(_payload_buffer), (char*) _response_buffer, sizeof(_response_buffer), _http_perform_options);
+        vTaskDelay(((TickType_t) interval * 1000 * 1000) / portTICK_PERIOD_MS);
+        status = http2_perform(session, "POST", CONFIG_AUTH_AUTH0_HOSTNAME, "/oauth/token", payload_buffer_, strlen(payload_buffer_), (char*) response_buffer_, sizeof(response_buffer_), http_perform_options_);
 
         if (status / 100 == 2) {
             break;
@@ -171,20 +181,20 @@ static esp_err_t _auth_perform_wait_for_token(http2_session_t* session, double i
         char* access_token = NULL;
         char* refresh_token = NULL;
 
-        if (_auth_parse_token_response((const char*) _response_buffer, &access_token, &refresh_token) != ESP_OK) {
+        if (auth_parse_token_response_((const char*) response_buffer_, &access_token, &refresh_token) != ESP_OK) {
             ESP_LOGE(TAG, "failed to parse auth0 json response");
             rc = ESP_FAIL;
             goto exit;
         }
 
-        _auth_write_credentials_to_storage(access_token, refresh_token);
+        auth_write_credentials_to_storage_(access_token, refresh_token);
     }
 
 exit:
     return rc;
 }
 
-static esp_err_t _auth_perform_interactive_register(void)
+static esp_err_t auth_perform_interactive_register_(void)
 {
     esp_err_t rc = ESP_OK;
     int status = -1;
@@ -199,16 +209,16 @@ static esp_err_t _auth_perform_interactive_register(void)
 
     // Perform HTTP call
     {
-        if (http2_session_connect(session, CONFIG_AUTH_AUTH0_HOSTNAME, 443, NULL) != ESP_OK) {
-            ESP_LOGE(TAG, "failed connect to %s:443", CONFIG_AUTH_AUTH0_HOSTNAME);
+        if (http2_session_connect(session, CONFIG_AUTH_AUTH0_HOSTNAME, CONFIG_AUTH_AUTH0_PORT, NULL) != ESP_OK) {
+            ESP_LOGE(TAG, "failed connect to %s:%d", CONFIG_AUTH_AUTH0_HOSTNAME, CONFIG_AUTH_AUTH0_PORT);
             rc = ESP_FAIL;
             goto exit;
         }
 
-        status = http2_perform(session, "POST", CONFIG_AUTH_AUTH0_HOSTNAME, "/oauth/device/code", DEVICE_TOKEN_REQUEST_PAYLOAD, strlen(DEVICE_TOKEN_REQUEST_PAYLOAD), (char*) _response_buffer, sizeof(_response_buffer), _http_perform_options);
+        status = http2_perform(session, "POST", CONFIG_AUTH_AUTH0_HOSTNAME, "/oauth/device/code", DEVICE_TOKEN_REQUEST_PAYLOAD, strlen(DEVICE_TOKEN_REQUEST_PAYLOAD), (char*) response_buffer_, sizeof(response_buffer_), http_perform_options_);
 
         if (status / 100 != 2) {
-            ESP_LOGE(TAG, "auth0 returned non-2xx status: %d message=%s", status, _response_buffer);
+            ESP_LOGE(TAG, "auth0 returned non-2xx status: %d message=%s", status, response_buffer_);
             rc = ESP_FAIL;
             goto exit;
         }
@@ -221,16 +231,16 @@ static esp_err_t _auth_perform_interactive_register(void)
         double expiry;
         double interval;
 
-        if (_auth_parse_device_code_response((const char*) _response_buffer, &user_code, &device_code, &interval, &expiry) != ESP_OK) {
+        if (auth_parse_device_code_response_((const char*) response_buffer_, &user_code, &device_code, &interval, &expiry) != ESP_OK) {
             ESP_LOGE(TAG, "failed to parse auth0 json response");
             rc = ESP_FAIL;
             goto exit;
         }
 
         ESP_LOGI(TAG, "https://" CONFIG_AUTH_AUTH0_HOSTNAME "/activate?user_code=%s", user_code);
-        snprintf((char*) _payload_buffer, sizeof(_payload_buffer), ACCESS_TOKEN_REQUEST_PAYLOAD_TEMPLATE, device_code);
+        snprintf((char*) payload_buffer_, sizeof(payload_buffer_), ACCESS_TOKEN_REQUEST_PAYLOAD_TEMPLATE, device_code);
 
-        rc = _auth_perform_wait_for_token(session, interval, expiry);
+        rc = auth_perform_wait_for_token_(session, interval, expiry);
     }
 
 exit:
@@ -238,17 +248,17 @@ exit:
     return rc;
 }
 
-static esp_err_t _auth_perform_refresh(void)
+static esp_err_t auth_perform_refresh_(void)
 {
     esp_err_t rc = ESP_OK;
 
-    static char refresh_token[512] = { 0 };
-    size_t refresh_token_len = 512;
+    static char refresh_token[CONFIG_AUTH_REFRESH_TOKEN_LEN] = { 0 };
+    size_t refresh_token_len = CONFIG_AUTH_REFRESH_TOKEN_LEN;
 
     int status = -1;
-    http2_session_t* session;
+    http2_session_t* session = http2_session_acquire(portMAX_DELAY);
 
-    if ((session = http2_session_acquire(portMAX_DELAY)) == NULL) {
+    if (session == NULL) {
         ESP_LOGE(TAG, "failed to acquire http2 session");
         rc = ESP_FAIL;
         goto exit;
@@ -256,26 +266,26 @@ static esp_err_t _auth_perform_refresh(void)
 
     // Prepare request
     {
-        if (_auth_read_credentials_from_storage(NULL, NULL, refresh_token, &refresh_token_len) != ESP_OK) {
+        if (auth_read_credentials_from_storage_(NULL, NULL, refresh_token, &refresh_token_len) != ESP_OK) {
             ESP_LOGE(TAG, "failed read refresh token from storage");
             rc = ESP_FAIL;
             goto exit;
         }
 
-        snprintf((char*) _payload_buffer, sizeof(_payload_buffer), REFRESH_TOKEN_REQUEST_PAYLOAD_TEMPLATE, refresh_token);
+        snprintf((char*) payload_buffer_, sizeof(payload_buffer_), REFRESH_TOKEN_REQUEST_PAYLOAD_TEMPLATE, refresh_token);
     }
 
     // Perform HTTP call
     {
-        if (http2_session_connect(session, CONFIG_AUTH_AUTH0_HOSTNAME, 443, NULL) != ESP_OK) {
-            ESP_LOGE(TAG, "failed connect to %s:443", CONFIG_AUTH_AUTH0_HOSTNAME);
+        if (http2_session_connect(session, CONFIG_AUTH_AUTH0_HOSTNAME, CONFIG_AUTH_AUTH0_PORT, NULL) != ESP_OK) {
+            ESP_LOGE(TAG, "failed connect to %s:%d", CONFIG_AUTH_AUTH0_HOSTNAME, CONFIG_AUTH_AUTH0_PORT);
             rc = ESP_FAIL;
             goto exit;
         }
 
-        status = http2_perform(session, "POST", CONFIG_AUTH_AUTH0_HOSTNAME, "/oauth/token", _payload_buffer, strlen(_payload_buffer), (char*) _response_buffer, sizeof(_response_buffer), _http_perform_options);
+        status = http2_perform(session, "POST", CONFIG_AUTH_AUTH0_HOSTNAME, "/oauth/token", payload_buffer_, strlen(payload_buffer_), (char*) response_buffer_, sizeof(response_buffer_), http_perform_options_);
 
-        if (status == 200) {
+        if (status == HTTP_STATUS_OK) {
             rc = ESP_FAIL;
             goto exit;
         }
@@ -285,13 +295,13 @@ static esp_err_t _auth_perform_refresh(void)
     {
         char* access_token = NULL;
 
-        if (_auth_parse_token_response((const char*) _response_buffer, &access_token, NULL) != ESP_OK) {
+        if (auth_parse_token_response_((const char*) response_buffer_, &access_token, NULL) != ESP_OK) {
             ESP_LOGE(TAG, "failed to parse auth0 json response");
             rc = ESP_FAIL;
             goto exit;
         }
 
-        _auth_write_credentials_to_storage(access_token, NULL);
+        auth_write_credentials_to_storage_(access_token, NULL);
     }
 
 exit:
@@ -299,27 +309,27 @@ exit:
     return rc;
 }
 
-static void _auth_task(void* args)
+static void auth_task_(void* args)
 {
     (void) args;
 
     esp_event_handler_instance_t ip_event_handler;
-    ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, ESP_EVENT_ANY_ID, &_auth_event_handler, NULL, &ip_event_handler));
+    ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, ESP_EVENT_ANY_ID, &auth_event_handler_, NULL, &ip_event_handler));
 
     esp_event_handler_instance_t wifi_event_handler;
-    ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &_auth_event_handler, NULL, &wifi_event_handler));
+    ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &auth_event_handler_, NULL, &wifi_event_handler));
 
     while (1) {
-        xEventGroupWaitBits(_auth_event_group, AUTH_CONNECTED_BIT, pdFALSE, pdFALSE, portMAX_DELAY);
+        xEventGroupWaitBits(auth_event_group_, AUTH_CONNECTED_BIT, pdFALSE, pdFALSE, portMAX_DELAY);
 
-        EventBits_t event = xEventGroupWaitBits(_auth_event_group, AUTH_REFRESH_REQUEST_BIT | AUTH_REGISTER_REQUEST_BIT, pdFALSE, pdFALSE, portMAX_DELAY);
+        EventBits_t event = xEventGroupWaitBits(auth_event_group_, AUTH_REFRESH_REQUEST_BIT | AUTH_REGISTER_REQUEST_BIT, pdFALSE, pdFALSE, portMAX_DELAY);
         if (event & AUTH_CONNECTED_BIT) {
             if (event & AUTH_REFRESH_REQUEST_BIT) {
-                _auth_perform_refresh();
-                xEventGroupClearBits(_auth_event_group, AUTH_REFRESH_REQUEST_BIT);
+                auth_perform_refresh_();
+                xEventGroupClearBits(auth_event_group_, AUTH_REFRESH_REQUEST_BIT);
             } else if (event & AUTH_REGISTER_REQUEST_BIT) {
-                _auth_perform_interactive_register();
-                xEventGroupClearBits(_auth_event_group, AUTH_REGISTER_REQUEST_BIT);
+                auth_perform_interactive_register_();
+                xEventGroupClearBits(auth_event_group_, AUTH_REGISTER_REQUEST_BIT);
             }
         }
     }
@@ -327,43 +337,45 @@ static void _auth_task(void* args)
     vTaskDelete(NULL);
 }
 
-static void _auth_timer_callback(void* args)
+static void auth_timer_callback_(void* args)
 {
     (void) args;
-    xEventGroupSetBits(_auth_event_group, AUTH_REFRESH_REQUEST_BIT);
+    xEventGroupSetBits(auth_event_group_, AUTH_REFRESH_REQUEST_BIT);
 }
 
 esp_err_t auth_init(void)
 {
-    if ((_auth_event_group = xEventGroupCreate()) == NULL) {
+    auth_event_group_ = xEventGroupCreate();
+
+    if (auth_event_group_ == NULL) {
         return ESP_FAIL;
     }
 
     esp_timer_create_args_t args = {
         .dispatch_method = ESP_TIMER_TASK,
-        .callback = _auth_timer_callback,
+        .callback = auth_timer_callback_,
         .arg = NULL
     };
 
-    if (esp_timer_create(&args, &_auth_refresh_timer) != ESP_OK) {
+    if (esp_timer_create(&args, &auth_refresh_timer_) != ESP_OK) {
         return ESP_FAIL;
     }
 
-    ERROR_CHECK(xTaskCreate(&_auth_task, "auth_task", AUTH_TASK_STACK_DEPTH, NULL, 6, NULL), pdPASS);
-    xEventGroupSetBits(_auth_event_group, AUTH_REFRESH_REQUEST_BIT);
+    ERROR_CHECK(xTaskCreate(&auth_task_, "auth_task", AUTH_TASK_STACK_DEPTH, NULL, 6, NULL), pdPASS);
+    xEventGroupSetBits(auth_event_group_, AUTH_REFRESH_REQUEST_BIT);
 
-    return esp_timer_start_periodic(_auth_refresh_timer, 3600e6);
+    return esp_timer_start_periodic(auth_refresh_timer_, ((int64_t) CONFIG_AUTH_REFRESH_INTERVAL * 1000 * 1000));
 }
 
 esp_err_t auth_request_register(void)
 {
-    xEventGroupSetBits(_auth_event_group, AUTH_REGISTER_REQUEST_BIT);
+    xEventGroupSetBits(auth_event_group_, AUTH_REGISTER_REQUEST_BIT);
     return ESP_OK;
 }
 
 esp_err_t auth_get_token(char* dest, size_t* len)
 {
-    esp_err_t rc = _auth_read_credentials_from_storage(dest, len, NULL, NULL);
+    esp_err_t rc = auth_read_credentials_from_storage_(dest, len, NULL, NULL);
 
     if (rc != ESP_OK) {
         *len = 0;
