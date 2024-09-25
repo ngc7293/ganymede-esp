@@ -32,6 +32,10 @@ target_compile_options(ganymede
         -Wall
         -Werror
 )
+target_compile_features(ganymede
+    PUBLIC
+        c_std_11
+)
 
 target_link_libraries(ganymede
     PUBLIC

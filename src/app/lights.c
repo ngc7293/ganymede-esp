@@ -13,14 +13,16 @@
 
 #include "lights.h"
 
-#define LIGHTS_TASK_STACK_DEPTH (1024 * 2)
+enum {
+    LIGHTS_TASK_STACK_DEPTH = 1024 * 2,
+};
 
 const char* TAG = "lights";
 
 static Ganymede__V2__LightConfig* incoming_light_config = NULL;
-static uint8_t buffer[1024];
+static uint8_t buffer[CONFIG_GANYMEDE_LIGHT_CONFIG_MAX_SIZE];
 
-static bool _lights_is_in_schedule(struct tm* timeinfo, Ganymede__V2__Luminaire__DailySchedule* schedule)
+static bool lights_is_in_schedule_(struct tm* timeinfo, Ganymede__V2__Luminaire__DailySchedule* schedule)
 {
     uint32_t now_sec = timeinfo->tm_hour * 3600 + timeinfo->tm_min * 60 + timeinfo->tm_sec;
     uint32_t start_sec = schedule->start->hour * 3600 + schedule->start->minute * 60 + schedule->start->second;
@@ -29,7 +31,7 @@ static bool _lights_is_in_schedule(struct tm* timeinfo, Ganymede__V2__Luminaire_
     return (start_sec <= now_sec && now_sec < stop_sec);
 }
 
-static void _lights_recompute(struct tm* timeinfo, Ganymede__V2__LightConfig* light_config)
+static void lights_recompute_(struct tm* timeinfo, Ganymede__V2__LightConfig* light_config)
 {
     for (size_t lum_idx = 0; lum_idx < light_config->n_luminaires; lum_idx++) {
         Ganymede__V2__Luminaire* luminaire = light_config->luminaires[lum_idx];
@@ -38,7 +40,7 @@ static void _lights_recompute(struct tm* timeinfo, Ganymede__V2__LightConfig* li
         size_t pp_idx = 0;
         for (; pp_idx < luminaire->n_photo_period; pp_idx++) {
 
-            if (_lights_is_in_schedule(timeinfo, luminaire->photo_period[pp_idx])) {
+            if (lights_is_in_schedule_(timeinfo, luminaire->photo_period[pp_idx])) {
                 active = true;
                 break;
             }
@@ -51,7 +53,7 @@ static void _lights_recompute(struct tm* timeinfo, Ganymede__V2__LightConfig* li
         gpio_set_level(luminaire->port, active);
         ESP_LOGD(
             TAG,
-            "%02d:%02d:%02d port=%lu signal=%s (%s)",
+            "%02d:%02d:%02d port=%" PRIu32 " signal=%s (%s)",
             timeinfo->tm_hour,
             timeinfo->tm_min,
             timeinfo->tm_sec,
@@ -62,7 +64,7 @@ static void _lights_recompute(struct tm* timeinfo, Ganymede__V2__LightConfig* li
     }
 }
 
-static uint64_t _lights_compute_pin_mask(Ganymede__V2__LightConfig* config)
+static uint64_t lights_compute_pin_mask_(Ganymede__V2__LightConfig* config)
 {
     uint64_t pin_mask = 0;
 
@@ -75,10 +77,10 @@ static uint64_t _lights_compute_pin_mask(Ganymede__V2__LightConfig* config)
     return pin_mask;
 }
 
-static esp_err_t _lights_reconfigure_gpio(Ganymede__V2__LightConfig* old_config, Ganymede__V2__LightConfig* new_config)
+static esp_err_t lights_reconfigure_gpio_(Ganymede__V2__LightConfig* old_config, Ganymede__V2__LightConfig* new_config)
 {
-    uint64_t old_pins = _lights_compute_pin_mask(old_config);
-    uint64_t new_pins = _lights_compute_pin_mask(new_config);
+    uint64_t old_pins = lights_compute_pin_mask_(old_config);
+    uint64_t new_pins = lights_compute_pin_mask_(new_config);
     uint64_t pins_to_disable = old_pins & (~new_pins);
 
     if (pins_to_disable != 0) {
@@ -106,14 +108,14 @@ static esp_err_t _lights_reconfigure_gpio(Ganymede__V2__LightConfig* old_config,
             ERROR_CHECK(gpio_set_level(port, false));
             ERROR_CHECK(gpio_config(&pin_config));
 
-            ESP_LOGD(TAG, "enabled gpio port %lu", port);
+            ESP_LOGD(TAG, "enabled gpio port %" PRIu32, port);
         }
     }
 
     return ESP_OK;
 }
 
-static void _lights_task(void* args)
+static void lights_task_(void* args)
 {
     (void) args;
     Ganymede__V2__LightConfig* light_config = NULL;
@@ -124,20 +126,20 @@ static void _lights_task(void* args)
     }
 
     light_config = incoming_light_config;
-    _lights_reconfigure_gpio(NULL, light_config);
+    lights_reconfigure_gpio_(NULL, light_config);
 
     while (true) {
         time_t now = time(NULL);
 
         struct tm timeinfo;
         localtime_r(&now, &timeinfo);
-        _lights_recompute(&timeinfo, light_config);
+        lights_recompute_(&timeinfo, light_config);
 
         if (light_config != incoming_light_config) {
-            _lights_reconfigure_gpio(light_config, incoming_light_config);
+            lights_reconfigure_gpio_(light_config, incoming_light_config);
             protobuf_c_message_free_unpacked((ProtobufCMessage*) light_config, NULL);
             light_config = incoming_light_config;
-            _lights_recompute(&timeinfo, light_config);
+            lights_recompute_(&timeinfo, light_config);
         }
 
         vTaskDelay(10000 / portTICK_PERIOD_MS);
@@ -146,7 +148,7 @@ static void _lights_task(void* args)
 
 esp_err_t app_lights_init(void)
 {
-    if (xTaskCreate(&_lights_task, "lights_task", LIGHTS_TASK_STACK_DEPTH, NULL, 3, NULL) != pdPASS) {
+    if (xTaskCreate(&lights_task_, "lights_task", LIGHTS_TASK_STACK_DEPTH, NULL, 3, NULL) != pdPASS) {
         ESP_LOGE(TAG, "Task creation failed");
         return ESP_FAIL;
     }

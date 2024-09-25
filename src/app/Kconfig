@@ -1,7 +1,13 @@
 menu "Ganymede App"
     config MEASUREMENTS_BUCKET_SIZE
-        int "Measurements bucket capacity"
+        int "Measurements bucket capacity (items)"
         default 100
         help
            Number of measurements held in memory before they are uploaded.
+
+    config MEASUREMENTS_ACQUISITION_INTERVAL
+        int "Measurements acquisition interval (seconds)"
+        default 60
+        help
+            How long to wait between data acquisition, in seconds
 endmenu

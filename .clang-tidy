@@ -1,0 +1,9 @@
+Checks: bugprone-*,clang-analyzer-*,modernize-*,performance-*,readability-*,-clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,-bugprone-easily-swappable-parameters,-readability-magic-numbers,-readability-function-cognitive-complexity
+WarningsAsErrors: bugprone-*,clang-analyzer-*,modernize-*,performance-*,readability-*,-clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,-bugprone-easily-swappable-parameters,-readability-magic-numbers,-readability-function-cognitive-complexity
+CheckOptions:
+  - key: readability-identifier-length.IgnoredVariableNames
+    value: '^(rc|c)$'
+  - key: readability-identifier-length.IgnoredLoopCounterNames
+    value: '^(i|j)$'
+  - key: readability-identifier-length.IgnoredParameterNames
+    value: '^(ng)$'

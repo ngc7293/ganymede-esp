@@ -17,16 +17,17 @@
 #include <net/auth/auth.h>
 #include <net/http2/http2.h>
 
-#define MEASUREMENTS_TASK_STACK_DEPTH (4 * 1024)
+enum {
+    MEASUREMENTS_TASK_STACK_DEPTH = 4 * 1024,
+};
 
 static const char* TAG = "measurements";
 
-static i2c_master_bus_handle_t _i2c_bus;
-static am2320_handle_t _am2320_handle;
+static i2c_master_bus_handle_t i2c_bus_;
+static am2320_handle_t am2320_handle_;
 
-static i2c_master_bus_handle_t _measurements_init_i2c(i2c_port_num_t port, gpio_num_t sda_pin, gpio_num_t scl_pin)
+static i2c_master_bus_handle_t measurements_init_i2c_(i2c_port_num_t port, gpio_num_t sda_pin, gpio_num_t scl_pin)
 {
-    esp_err_t rc;
     i2c_master_bus_handle_t bus = NULL;
 
     i2c_master_bus_config_t config = {
@@ -38,32 +39,35 @@ static i2c_master_bus_handle_t _measurements_init_i2c(i2c_port_num_t port, gpio_
         .flags.enable_internal_pullup = true,
     };
 
-    if ((rc = i2c_new_master_bus(&config, &bus)) != ESP_OK) {
+    if (i2c_new_master_bus(&config, &bus) != ESP_OK) {
         bus = NULL;
     }
 
     return bus;
 }
 
-static esp_err_t _measurements_build_atmosphere_measurement(Ganymede__V2__Measurement** dest, char* device_id, time_t observed_on, float relative_humidity, float temperature)
+static esp_err_t measurements_build_atmosphere_measurement_(Ganymede__V2__Measurement** dest, char* device_id, time_t observed_on, float relative_humidity, float temperature)
 {
     esp_err_t rc = ESP_OK;
 
-    if ((*dest = (Ganymede__V2__Measurement*) malloc(sizeof(Ganymede__V2__Measurement))) == NULL) {
+    *dest = (Ganymede__V2__Measurement*) malloc(sizeof(Ganymede__V2__Measurement));
+    if (*dest == NULL) {
         ESP_LOGE(TAG, "failed to allocate memory for measurement");
         rc = ESP_FAIL;
         goto exit;
     }
     ganymede__v2__measurement__init(*dest);
 
-    if (((*dest)->timestamp = (Google__Protobuf__Timestamp*) malloc(sizeof(Google__Protobuf__Timestamp))) == NULL) {
+    (*dest)->timestamp = (Google__Protobuf__Timestamp*) malloc(sizeof(Google__Protobuf__Timestamp));
+    if ((*dest)->timestamp == NULL) {
         ESP_LOGE(TAG, "failed to allocate memory for timestamp");
         rc = ESP_FAIL;
         goto cleanup_measurement;
     }
     google__protobuf__timestamp__init((*dest)->timestamp);
 
-    if (((*dest)->atmosphere = (Ganymede__V2__AtmosphericMeasurements*) malloc(sizeof(Ganymede__V2__AtmosphericMeasurements))) == NULL) {
+    (*dest)->atmosphere = (Ganymede__V2__AtmosphericMeasurements*) malloc(sizeof(Ganymede__V2__AtmosphericMeasurements));
+    if ((*dest)->atmosphere == NULL) {
         ESP_LOGE(TAG, "failed to allocate memory for atmosphere measurement");
         rc = ESP_FAIL;
         goto cleanup_timestamp;
@@ -87,7 +91,7 @@ exit:
     return rc;
 }
 
-static esp_err_t _measurements_push(time_t timestamps[], float humidities[], float temperatures[], ssize_t len)
+static esp_err_t measurements_push_(time_t timestamps[], float humidities[], float temperatures[], ssize_t len)
 {
     char device_id[DEVICE_ID_LEN] = { 0 };
 
@@ -105,7 +109,7 @@ static esp_err_t _measurements_push(time_t timestamps[], float humidities[], flo
     Ganymede__V2__Measurement** measurements = (Ganymede__V2__Measurement**) malloc(len * sizeof(Ganymede__V2__Measurement*));
 
     for (; i < len; i++) {
-        if (_measurements_build_atmosphere_measurement(&measurements[i], device_id, timestamps[i], humidities[i], temperatures[i]) != ESP_OK) {
+        if (measurements_build_atmosphere_measurement_(&measurements[i], device_id, timestamps[i], humidities[i], temperatures[i]) != ESP_OK) {
             goto cleanup;
         }
     }
@@ -129,7 +133,7 @@ cleanup:
     return rc;
 }
 
-static void _measurements_task(void* args)
+static void measurements_task_(void* args)
 {
     time_t timestamps[CONFIG_MEASUREMENTS_BUCKET_SIZE] = { 0 };
     float humidities[CONFIG_MEASUREMENTS_BUCKET_SIZE] = { 0 };
@@ -138,16 +142,16 @@ static void _measurements_task(void* args)
     size_t cursor = 0;
 
     while (true) {
-        vTaskDelay(60 * 1000 / portTICK_PERIOD_MS);
+        vTaskDelay((CONFIG_MEASUREMENTS_ACQUISITION_INTERVAL * 1000) / portTICK_PERIOD_MS);
 
-        if (am2320_readf(_am2320_handle, &humidities[cursor], &temperatures[cursor]) == ESP_OK) {
+        if (am2320_readf(am2320_handle_, &humidities[cursor], &temperatures[cursor]) == ESP_OK) {
             ESP_LOGI(TAG, "%0.2frh %0.2f°C", humidities[cursor], temperatures[cursor]);
             timestamps[cursor] = time(NULL);
             cursor++;
         }
 
         if (cursor >= CONFIG_MEASUREMENTS_BUCKET_SIZE) {
-            _measurements_push(timestamps, humidities, temperatures, CONFIG_MEASUREMENTS_BUCKET_SIZE);
+            measurements_push_(timestamps, humidities, temperatures, CONFIG_MEASUREMENTS_BUCKET_SIZE);
             cursor = 0;
         }
     }
@@ -155,17 +159,21 @@ static void _measurements_task(void* args)
 
 esp_err_t app_measurements_init()
 {
-    if ((_i2c_bus = _measurements_init_i2c(1, 5, 6)) == NULL) {
+    i2c_bus_ = measurements_init_i2c_(1, 5, 6);
+
+    if (i2c_bus_ == NULL) {
         ESP_LOGE(TAG, "failed to initialize i2c bus");
         return ESP_FAIL;
     }
 
-    if ((_am2320_handle = am2320_register(_i2c_bus)) == NULL) {
+    am2320_handle_ = am2320_register(i2c_bus_);
+
+    if (am2320_handle_ == NULL) {
         ESP_LOGE(TAG, "failed to register am2320 device");
         return ESP_FAIL;
     }
 
-    if (xTaskCreate(&_measurements_task, "measurements_task", MEASUREMENTS_TASK_STACK_DEPTH, NULL, 4, NULL) != pdPASS) {
+    if (xTaskCreate(&measurements_task_, "measurements_task", MEASUREMENTS_TASK_STACK_DEPTH, NULL, 4, NULL) != pdPASS) {
         ESP_LOGE(TAG, "Task creation failed");
         return ESP_FAIL;
     }
