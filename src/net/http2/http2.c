@@ -556,7 +556,8 @@ esp_err_t http2_session_connect(http2_session_t* session, const char* hostname, 
     return rc;
 }
 
-esp_err_t http2_perform(http2_session_t* session, const char* method, const char* authority, const char* path, const char* payload, size_t payload_len, char* dest, size_t dest_len, struct http_perform_options options) // NOLINT(readability-non-const-parameter) // FIXME: Is clang-tidy wrong?
+// NOLINTNEXTLINE(readability-non-const-parameter) // clang-tidy doesn't understand how the dest pointer is used
+esp_err_t http2_perform(http2_session_t* session, const char* method, const char* authority, const char* path, const char* payload, size_t payload_len, char* dest, size_t dest_len, struct http_perform_options options)
 {
     esp_err_t rc = ESP_FAIL;
 
