@@ -25,7 +25,7 @@ menu "Authentication"
 
     config AUTH_ACCESS_TOKEN_LEN
         int "Maximum length of the access token including the NULL terminator (bytes)"
-        default 512
+        default 1024
 
     config AUTH_REFRESH_TOKEN_LEN
         int "Maximum length of the refresh token including the NULL terminator (bytes)"

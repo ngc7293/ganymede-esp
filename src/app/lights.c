@@ -14,7 +14,7 @@
 #include "lights.h"
 
 enum {
-    LIGHTS_TASK_STACK_DEPTH = 1024 * 2,
+    LIGHTS_TASK_STACK_DEPTH = 1024 * 4,
 };
 
 const char* TAG = "lights";

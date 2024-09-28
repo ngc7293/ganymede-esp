@@ -166,10 +166,10 @@ static esp_err_t auth_perform_wait_for_token_(http2_session_t* session, double i
     esp_err_t rc = ESP_OK;
     int status = -1;
 
-    int64_t end = esp_timer_get_time() + (int64_t) (expiry * 1000 * 1000);
+    int64_t end = esp_timer_get_time() + (int64_t) (expiry * 1000LL * 1000LL);
 
     while (esp_timer_get_time() < end) {
-        vTaskDelay(((TickType_t) interval * 1000 * 1000) / portTICK_PERIOD_MS);
+        vTaskDelay(((TickType_t) interval * 1000LL) / portTICK_PERIOD_MS);
         status = http2_perform(session, "POST", CONFIG_AUTH_AUTH0_HOSTNAME, "/oauth/token", payload_buffer_, strlen(payload_buffer_), (char*) response_buffer_, sizeof(response_buffer_), http_perform_options_);
 
         if (status / 100 == 2) {

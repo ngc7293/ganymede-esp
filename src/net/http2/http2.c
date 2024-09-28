@@ -13,7 +13,7 @@
 
 enum {
     // Stack size for http2 task. NGHTTP2 & mbedtls require considerable memory.
-    HTTP2_TASK_STACK_DEPTH = 1024 * 20,
+    HTTP2_TASK_STACK_DEPTH = 1024 * 24,
 
     // NGHTTP2 does not allow us to provide a static pointer for the rx buffer.
     // This can cause issue as our very limited memory gets fragemented, and we
