@@ -18,10 +18,14 @@
 #include <net/http2/http2.h>
 
 enum {
-    MEASUREMENTS_TASK_STACK_DEPTH = 4 * 1024,
+    MEASUREMENTS_TASK_STACK_DEPTH = 6 * 1024,
 };
 
 static const char* TAG = "measurements";
+
+static time_t timestamps_[CONFIG_MEASUREMENTS_BUCKET_SIZE] = { 0 };
+static float humidities_[CONFIG_MEASUREMENTS_BUCKET_SIZE] = { 0 };
+static float temperatures_[CONFIG_MEASUREMENTS_BUCKET_SIZE] = { 0 };
 
 static i2c_master_bus_handle_t i2c_bus_;
 static am2320_handle_t am2320_handle_;
@@ -135,23 +139,19 @@ cleanup:
 
 static void measurements_task_(void* args)
 {
-    time_t timestamps[CONFIG_MEASUREMENTS_BUCKET_SIZE] = { 0 };
-    float humidities[CONFIG_MEASUREMENTS_BUCKET_SIZE] = { 0 };
-    float temperatures[CONFIG_MEASUREMENTS_BUCKET_SIZE] = { 0 };
-
     size_t cursor = 0;
 
     while (true) {
         vTaskDelay((CONFIG_MEASUREMENTS_ACQUISITION_INTERVAL * 1000) / portTICK_PERIOD_MS);
 
-        if (am2320_readf(am2320_handle_, &humidities[cursor], &temperatures[cursor]) == ESP_OK) {
-            ESP_LOGI(TAG, "%0.2frh %0.2f°C", humidities[cursor], temperatures[cursor]);
-            timestamps[cursor] = time(NULL);
+        if (am2320_readf(am2320_handle_, &humidities_[cursor], &temperatures_[cursor]) == ESP_OK) {
+            ESP_LOGI(TAG, "%0.2frh %0.2f°C", humidities_[cursor], temperatures_[cursor]);
+            timestamps_[cursor] = time(NULL);
             cursor++;
         }
 
         if (cursor >= CONFIG_MEASUREMENTS_BUCKET_SIZE) {
-            measurements_push_(timestamps, humidities, temperatures, CONFIG_MEASUREMENTS_BUCKET_SIZE);
+            measurements_push_(timestamps_, humidities_, temperatures_, CONFIG_MEASUREMENTS_BUCKET_SIZE);
             cursor = 0;
         }
     }

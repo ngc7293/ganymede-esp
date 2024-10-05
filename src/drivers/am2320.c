@@ -138,7 +138,7 @@ esp_err_t am2320_readf(am2320_handle_t handle, float* relative_humidity, float* 
 
     rc = am2320_read(handle, &int_relative_humidity, &int_temperature);
 
-    if (rc != ESP_OK) {
+    if (rc == ESP_OK) {
         *relative_humidity = ((float) int_relative_humidity) / 1000.0F;
         *temperature = ((float) int_temperature) / 10.0F;
     }

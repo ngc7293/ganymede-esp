@@ -24,6 +24,7 @@ function (generate_protobuf_c)
     endforeach()
     
     add_custom_command(
+        DEPENDS ${PROTOS}
         OUTPUT ${PROTO_C_SOURCES} ${PROTO_C_HEADERS}
         COMMAND protoc --c_out=${CMAKE_CURRENT_BINARY_DIR} ${PROTOS}
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}

@@ -7,6 +7,6 @@
 
 esp_err_t app_lights_init(void);
 
-esp_err_t lights_update_config(Ganymede__V2__LightConfig* config);
+esp_err_t lights_update_config(const Ganymede__V2__LightConfig* config);
 
 #endif // APP__LIGHTS__H_

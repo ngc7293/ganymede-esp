@@ -71,6 +71,7 @@ message PollResponse {
     google.protobuf.Duration poll_period = 21;
 
     LightConfig light_config = 101;
+    repeated SensorConfig sensor_configs = 102;
 }
 
 message CreateConfigRequest {
@@ -150,6 +151,17 @@ message LightConfig {
     repeated Luminaire luminaires = 1;
 }
 
+message Am2320Config {
+    uint32 sda_port = 1;
+    uint32 scl_port = 2;
+}
+
+message SensorConfig {
+    oneof sensor {
+        Am2320Config am2320 = 1;
+    };
+}
+
 message Config {
     // Output only.
     string uid = 1;
@@ -161,4 +173,5 @@ message Config {
     reserved 10, 11;
     reserved "pomp_config", "solution_config";
     LightConfig light_config = 12;
+    repeated SensorConfig sensor_configs = 13;
 }

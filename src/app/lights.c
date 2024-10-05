@@ -155,7 +155,7 @@ esp_err_t app_lights_init(void)
     return ESP_OK;
 }
 
-esp_err_t lights_update_config(Ganymede__V2__LightConfig* config)
+esp_err_t lights_update_config(const Ganymede__V2__LightConfig* config)
 {
     // FIXME: This is a hack to quickly deep-clone, but it is not performance efficient
     size_t size = protobuf_c_message_pack((ProtobufCMessage*) config, buffer);
